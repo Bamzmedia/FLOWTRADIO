@@ -1,26 +1,62 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+:root, [data-theme="dark"] {
+  --background: #05050f;
+  --foreground: #f8fafc;
+  
+  --nado-primary: #00f0ff;
+  --nado-secondary: #7000ff;
+  --nado-accent: #ff0055;
+  
+  --glass-bg: rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="light"] {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  
+  --nado-primary: #0ea5e9;
+  --nado-secondary: #8b5cf6;
+  --nado-accent: #ef4444;
+  
+  --glass-bg: rgba(0, 0, 0, 0.03);
+  --glass-border: rgba(0, 0, 0, 0.08);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-primary: var(--nado-primary);
+  --color-secondary: var(--nado-secondary);
+  --color-accent: var(--nado-accent);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  background-image: 
+    radial-gradient(circle at 15% 50%, rgba(112, 0, 255, 0.1), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(0, 240, 255, 0.1), transparent 25%);
+  background-attachment: fixed;
+  min-height: 100vh;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Glassmorphism utilities */
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+}
+
+/* Animated gradient text */
+.text-gradient {
+  background: linear-gradient(to right, var(--nado-primary), var(--nado-secondary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
