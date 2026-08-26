@@ -2,12 +2,8 @@
 
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { ethers } from 'ethers';
-
-declare global {
-  interface Window {
-    ethereum?: any;
-  }
-}
+import { useAppKit, useAppKitAccount, useAppKitNetwork, useAppKitProvider, useDisconnect } from '@reown/appkit/react';
+import { mainnet, arbitrum, polygon } from '@reown/appkit/networks';
 
 export type Network = 'Ethereum' | 'Arbitrum' | 'Solana' | 'Polygon';
 
@@ -48,9 +44,14 @@ const mockTransactions: Transaction[] = [
 const WalletContext = createContext<WalletState | undefined>(undefined);
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const [isConnected, setIsConnected] = useState(false);
-  const [address, setAddress] = useState<string | null>(null);
-  const [network, setNetwork] = useState<Network>('Arbitrum');
+  const { open } = useAppKit();
+  const { address: appKitAddress, isConnected: appKitIsConnected } = useAppKitAccount();
+  const { disconnect: appKitDisconnect } = useDisconnect();
+  const { caipNetwork, switchNetwork } = useAppKitNetwork();
+  const { walletProvider } = useAppKitProvider('eip155');
+
+  const [isDemoConnected, setIsDemoConnected] = useState(false);
+  const [localNetwork, setLocalNetwork] = useState<Network>('Arbitrum');
   const [balance, setBalance] = useState(0);
   const [transactions, setTransactions] = useState<Transaction[]>(mockTransactions);
   const [stakedBalances, setStakedBalances] = useState<Record<string, number>>({
@@ -63,6 +64,25 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     ETH: 0,
   });
   const [isHydrated, setIsHydrated] = useState(false);
+
+  // Derived state
+  const isConnected = appKitIsConnected || isDemoConnected;
+  
+  const address = appKitAddress 
+    ? `${appKitAddress.substring(0, 6)}...${appKitAddress.substring(appKitAddress.length - 4)}`
+    : (isDemoConnected ? "0x71C...392b" : null);
+
+  const getMappedNetwork = (caipNetName?: string, caipNetId?: string): Network => {
+    const searchString = `${caipNetName || ''} ${caipNetId || ''}`.toLowerCase();
+    if (searchString.includes('arbitrum') || searchString.includes('42161')) return 'Arbitrum';
+    if (searchString.includes('polygon') || searchString.includes('matic') || searchString.includes('137')) return 'Polygon';
+    if (searchString.includes('ethereum') || searchString.includes('mainnet') || searchString.includes('eip155:1')) return 'Ethereum';
+    return 'Arbitrum';
+  };
+
+  const network = appKitIsConnected && caipNetwork
+    ? getMappedNetwork(caipNetwork.name, caipNetwork.id?.toString())
+    : localNetwork;
 
   // Hydrate from localStorage on mount
   useEffect(() => {
@@ -79,6 +99,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       const savedTokens = localStorage.getItem('wallet_tokens');
       if (savedTokens) setTokenBalances(JSON.parse(savedTokens));
       
+      const savedDemo = localStorage.getItem('wallet_is_demo');
+      if (savedDemo) setIsDemoConnected(savedDemo === 'true');
+
+      const savedLocalNet = localStorage.getItem('wallet_local_net');
+      if (savedLocalNet) setLocalNetwork(savedLocalNet as Network);
+
       setIsHydrated(true);
     }
   }, []);
@@ -90,14 +116,31 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('wallet_transactions', JSON.stringify(transactions));
       localStorage.setItem('wallet_staked', JSON.stringify(stakedBalances));
       localStorage.setItem('wallet_tokens', JSON.stringify(tokenBalances));
+      localStorage.setItem('wallet_is_demo', isDemoConnected.toString());
+      localStorage.setItem('wallet_local_net', localNetwork);
     }
-  }, [balance, transactions, stakedBalances, tokenBalances, isHydrated]);
+  }, [balance, transactions, stakedBalances, tokenBalances, isDemoConnected, localNetwork, isHydrated]);
+
+  // Sync real balance if AppKit connects
+  useEffect(() => {
+    const fetchBalance = async () => {
+      if (appKitIsConnected && appKitAddress && walletProvider) {
+        try {
+          const provider = new ethers.BrowserProvider(walletProvider as any);
+          const balanceWei = await provider.getBalance(appKitAddress);
+          setBalance(parseFloat(ethers.formatEther(balanceWei)));
+        } catch (e) {
+          console.error("Failed to fetch balance", e);
+        }
+      }
+    };
+    fetchBalance();
+  }, [appKitIsConnected, appKitAddress, walletProvider]);
 
   const connect = async (selectedNetwork: Network, isDemo: boolean = false) => {
     if (isDemo) {
-      setIsConnected(true);
-      setAddress("0x71C...392b");
-      setNetwork(selectedNetwork);
+      setIsDemoConnected(true);
+      setLocalNetwork(selectedNetwork);
       setBalance(10000); // $10,000 USDC starting balance
       setTokenBalances({
         NADO: 500,
@@ -106,47 +149,36 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (typeof window !== 'undefined' && window.ethereum) {
-      try {
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const accounts = await provider.send("eth_requestAccounts", []);
-        
-        if (accounts.length > 0) {
-          const userAddress = accounts[0];
-          
-          setIsConnected(true);
-          setAddress(`${userAddress.substring(0, 6)}...${userAddress.substring(38)}`);
-          setNetwork(selectedNetwork);
-          
-          const balanceWei = await provider.getBalance(userAddress);
-          const balanceEth = ethers.formatEther(balanceWei);
-          
-          setBalance(parseFloat(balanceEth)); 
-        }
-      } catch (error) {
-        console.error("Connection failed", error);
-        alert("Wallet connection rejected or failed. Please try again.");
-      }
-    } else {
-      // Fallback Mock Connection for Mobile / Browser without Web3 Provider
-      const useSimulated = confirm("No Web3 wallet detected. Would you like to connect a Simulated Demo Wallet to test all trading and staking features?");
-      if (useSimulated) {
-        setIsConnected(true);
-        setAddress("0x71C...392b");
-        setNetwork(selectedNetwork);
-        setBalance(10000); // $10,000 USDC starting balance
-        setTokenBalances({
-          NADO: 500,
-          ETH: 1.5
-        });
-      }
+    try {
+      await open();
+    } catch (error) {
+      console.error("Connection failed", error);
     }
   };
 
   const disconnect = () => {
-    setIsConnected(false);
-    setAddress(null);
+    if (appKitIsConnected) {
+      appKitDisconnect();
+    }
+    setIsDemoConnected(false);
     setBalance(0);
+  };
+
+  const setNetwork = async (selectedNetwork: Network) => {
+    setLocalNetwork(selectedNetwork);
+    if (appKitIsConnected) {
+      let targetNetwork: any = arbitrum;
+      if (selectedNetwork === 'Ethereum') targetNetwork = mainnet;
+      if (selectedNetwork === 'Polygon') targetNetwork = polygon;
+      
+      try {
+        if (switchNetwork) {
+          await switchNetwork(targetNetwork);
+        }
+      } catch (err) {
+        console.error("Failed to switch network in AppKit", err);
+      }
+    }
   };
 
   const addTransaction = (tx: Omit<Transaction, 'id' | 'date' | 'status'>) => {

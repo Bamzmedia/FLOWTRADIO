@@ -33,6 +33,7 @@ export const viewport: Viewport = {
 
 import { LocalizationProvider } from "@/components/LocalizationContext";
 import { WalletProvider } from "@/components/WalletContext";
+import { AppKitProvider } from "@/components/AppKitProvider";
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
@@ -43,9 +44,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
         <LocalizationProvider>
-          <WalletProvider>
-            {children}
-          </WalletProvider>
+          <AppKitProvider>
+            <WalletProvider>
+              {children}
+            </WalletProvider>
+          </AppKitProvider>
         </LocalizationProvider>
         <script dangerouslySetInnerHTML={{ __html: `
           if ('serviceWorker' in navigator) {
