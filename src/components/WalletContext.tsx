@@ -120,7 +120,18 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         alert("Wallet connection rejected or failed. Please try again.");
       }
     } else {
-      alert("No Web3 wallet detected. Please install MetaMask.");
+      // Fallback Mock Connection for Mobile / Browser without Web3 Provider
+      const useSimulated = confirm("No Web3 wallet detected. Would you like to connect a Simulated Demo Wallet to test all trading and staking features?");
+      if (useSimulated) {
+        setIsConnected(true);
+        setAddress("0x71C...392b");
+        setNetwork(selectedNetwork);
+        setBalance(10000); // $10,000 USDC starting balance
+        setTokenBalances({
+          NADO: 500,
+          ETH: 1.5
+        });
+      }
     }
   };
 
