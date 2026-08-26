@@ -31,7 +31,7 @@ interface WalletState {
   transactions: Transaction[];
   stakedBalances: Record<string, number>;
   tokenBalances: Record<string, number>;
-  connect: (network: Network) => void;
+  connect: (network: Network, isDemo?: boolean) => void;
   disconnect: () => void;
   setNetwork: (network: Network) => void;
   addTransaction: (tx: Omit<Transaction, 'id' | 'date' | 'status'>) => void;
@@ -93,7 +93,19 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [balance, transactions, stakedBalances, tokenBalances, isHydrated]);
 
-  const connect = async (selectedNetwork: Network) => {
+  const connect = async (selectedNetwork: Network, isDemo: boolean = false) => {
+    if (isDemo) {
+      setIsConnected(true);
+      setAddress("0x71C...392b");
+      setNetwork(selectedNetwork);
+      setBalance(10000); // $10,000 USDC starting balance
+      setTokenBalances({
+        NADO: 500,
+        ETH: 1.5
+      });
+      return;
+    }
+
     if (typeof window !== 'undefined' && window.ethereum) {
       try {
         const provider = new ethers.BrowserProvider(window.ethereum);
@@ -101,10 +113,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         
         if (accounts.length > 0) {
           const userAddress = accounts[0];
-          
-          // Force a signature to verify ownership (Authentication)
-          const signer = await provider.getSigner();
-          await signer.signMessage("Welcome to NEOTRADIO!\n\nPlease sign this message to verify your wallet ownership and log in.");
           
           setIsConnected(true);
           setAddress(`${userAddress.substring(0, 6)}...${userAddress.substring(38)}`);

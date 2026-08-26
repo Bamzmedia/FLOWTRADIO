@@ -16,8 +16,8 @@ export default function Navbar() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  const handleConnect = (selectedNetwork: Network) => {
-    connect(selectedNetwork);
+  const handleConnect = (selectedNetwork: Network, isDemo: boolean = false) => {
+    connect(selectedNetwork, isDemo);
     setShowWalletModal(false);
   };
 
@@ -168,6 +168,23 @@ export default function Navbar() {
                     <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold">W</div>
                     <span className="font-bold group-hover:text-blue-500 transition-colors">WalletConnect</span>
                   </div>
+                </button>
+                
+                <div className="relative flex py-2 items-center">
+                  <div className="flex-grow border-t border-white/10"></div>
+                  <span className="flex-shrink mx-4 text-gray-500 text-xs font-semibold">OR</span>
+                  <div className="flex-grow border-t border-white/10"></div>
+                </div>
+
+                <button 
+                  onClick={() => handleConnect(network, true)} 
+                  className="w-full flex items-center justify-between p-4 bg-primary/10 border border-primary/20 rounded-xl hover:bg-primary/20 hover:border-primary/50 transition-all group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-background font-bold">D</div>
+                    <span className="font-bold text-primary group-hover:text-primary transition-colors">Simulated Demo Wallet</span>
+                  </div>
+                  <span className="text-xs text-primary bg-primary/20 px-2 py-1 rounded-full">Instant</span>
                 </button>
               </div>
             </div>
