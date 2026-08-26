@@ -7,10 +7,56 @@ import { useWallet } from '@/components/WalletContext';
 import { ChevronDown, Settings, Zap, Info } from 'lucide-react';
 import { createChart, ColorType, CrosshairMode, CandlestickSeries } from 'lightweight-charts';
 
+interface MarketConfig {
+  id: string;
+  name: string;
+  pythId: string;
+  binanceSymbol: string;
+  decimals: number;
+}
+
+const MARKETS: MarketConfig[] = [
+  {
+    id: 'SOL-PERP',
+    name: 'SOL-PERP',
+    pythId: '0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d',
+    binanceSymbol: 'SOLUSDT',
+    decimals: 2
+  },
+  {
+    id: 'BTC-PERP',
+    name: 'BTC-PERP',
+    pythId: '0xe62df6c8b4a85f16b255383b75c465b5c0fd4e434e173beedce772c14309fb16',
+    binanceSymbol: 'BTCUSDT',
+    decimals: 1
+  },
+  {
+    id: 'ETH-PERP',
+    name: 'ETH-PERP',
+    pythId: '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0aec',
+    binanceSymbol: 'ETHUSDT',
+    decimals: 2
+  }
+];
+
 export default function ProTradePage() {
   const { t, formatCurrency } = useLocalization();
   const { isConnected, balance, addTransaction } = useWallet();
+  
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<any>(null);
+  const seriesRef = useRef<any>(null);
+
+  // Market State
+  const [activeMarket, setActiveMarket] = useState<MarketConfig>(MARKETS[0]);
+  const [price, setPrice] = useState<number>(145.5); // Fallback solver
+  const [chartResolution, setChartResolution] = useState<'1m' | '5m' | '15m' | '1H' | '4H' | '1D'>('1H');
+  const [tickerStats, setTickerStats] = useState({
+    change24h: '+0.00',
+    high24h: 0,
+    low24h: 0,
+    volume24h: '0',
+  });
 
   // Trading Widget State
   const [tradeDirection, setTradeDirection] = useState<'long' | 'short'>('long');
@@ -25,37 +71,92 @@ export default function ProTradePage() {
   // Jitter State for Orderbook
   const [jitter, setJitter] = useState(0);
 
-  // Mock Data
-  const assetPrice = 2.45;
+  // Derived calculations
   const numPayAmount = parseFloat(payAmount) || 0;
   const positionSizeUsd = numPayAmount * leverage;
-  const positionSizeAsset = positionSizeUsd / assetPrice;
+  const positionSizeAsset = price > 0 ? positionSizeUsd / price : 0;
 
+  // Order Book and Recent Trades based on dynamic price
   const orderBookAsks = [
-    { price: 2.458, size: 14500 + jitter, total: 45000 },
-    { price: 2.457, size: 8200 - jitter, total: 30500 },
-    { price: 2.455, size: 12000 + (jitter*2), total: 22300 },
-    { price: 2.453, size: 4500, total: 10300 },
-    { price: 2.452, size: 5800 - jitter, total: 5800 },
+    { price: price * 1.0020, size: Math.floor(14500 + jitter), total: 45000 },
+    { price: price * 1.0015, size: Math.floor(8200 - jitter), total: 30500 },
+    { price: price * 1.0010, size: Math.floor(12000 + (jitter * 2)), total: 22300 },
+    { price: price * 1.0005, size: 4500, total: 10300 },
+    { price: price * 1.0002, size: Math.floor(5800 - jitter), total: 5800 },
   ];
 
   const orderBookBids = [
-    { price: 2.449, size: 8500 + jitter, total: 8500 },
-    { price: 2.448, size: 15200, total: 23700 },
-    { price: 2.446, size: 4100 - jitter, total: 27800 },
-    { price: 2.445, size: 18000 + (jitter*3), total: 45800 },
-    { price: 2.443, size: 9000, total: 54800 },
+    { price: price * 0.9998, size: Math.floor(8500 + jitter), total: 8500 },
+    { price: price * 0.9995, size: 15200, total: 23700 },
+    { price: price * 0.9990, size: Math.floor(4100 - jitter), total: 27800 },
+    { price: price * 0.9985, size: Math.floor(18000 + (jitter * 3)), total: 45800 },
+    { price: price * 0.9980, size: 9000, total: 54800 },
   ];
 
   const recentTrades = [
-    { price: 2.450, size: 1250, time: '14:23:45', type: 'buy' },
-    { price: 2.450, size: 400, time: '14:23:42', type: 'buy' },
-    { price: 2.451, size: 8500, time: '14:23:38', type: 'sell' },
-    { price: 2.451, size: 120, time: '14:23:37', type: 'sell' },
-    { price: 2.452, size: 4500, time: '14:23:30', type: 'buy' },
+    { price: price * 1.0001, size: 1250, time: '14:23:45', type: 'buy' },
+    { price: price * 0.9999, size: 400, time: '14:23:42', type: 'buy' },
+    { price: price * 1.0002, size: 8500, time: '14:23:38', type: 'sell' },
+    { price: price * 0.9998, size: 120, time: '14:23:37', type: 'sell' },
+    { price: price * 1.0000, size: 4500, time: '14:23:30', type: 'buy' },
   ];
 
-  // Simulated Orderbook Activity
+  // Helper: Fetch Pyth Price via REST
+  const fetchPythPrice = async (pythId: string) => {
+    try {
+      const response = await fetch(`https://hermes.pyth.network/v2/updates/price/latest?ids[]=${pythId}`);
+      const data = await response.json();
+      if (data && data.parsed && data.parsed.length > 0) {
+        const parsed = data.parsed[0];
+        const rawPrice = BigInt(parsed.price.price);
+        const expo = parsed.price.expo;
+        const finalPrice = Number(rawPrice) * Math.pow(10, expo);
+        return finalPrice;
+      }
+    } catch (e) {
+      console.error("Failed to fetch latest price from Pyth Hermes API", e);
+    }
+    return null;
+  };
+
+  // Helper: Fetch Binance Ticker Data
+  const fetchBinanceTicker = async (symbol: string) => {
+    try {
+      const response = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`);
+      const ticker = await response.json();
+      return {
+        change24h: parseFloat(ticker.priceChangePercent).toFixed(2),
+        high24h: parseFloat(ticker.highPrice),
+        low24h: parseFloat(ticker.lowPrice),
+        volume24h: parseFloat(ticker.volume).toLocaleString(undefined, { maximumFractionDigits: 0 }),
+      };
+    } catch (e) {
+      console.error("Failed to fetch Binance ticker", e);
+      return null;
+    }
+  };
+
+  // Helper: Fetch Binance Klines for Chart
+  const fetchHistoricalData = async (symbol: string, interval: string) => {
+    const binanceInterval = interval.toLowerCase();
+    const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${binanceInterval}&limit=100`;
+    try {
+      const response = await fetch(url);
+      const klines = await response.json();
+      return klines.map((k: any) => ({
+        time: k[0] / 1000, // seconds
+        open: parseFloat(k[1]),
+        high: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        close: parseFloat(k[4]),
+      }));
+    } catch (e) {
+      console.error("Failed to fetch historical data from Binance", e);
+      return [];
+    }
+  };
+
+  // Simulated Orderbook Jitter
   useEffect(() => {
     const interval = setInterval(() => {
       setJitter(Math.floor(Math.random() * 500) - 250);
@@ -63,7 +164,79 @@ export default function ProTradePage() {
     return () => clearInterval(interval);
   }, []);
 
-  // TradingView Lightweight Charts
+  // Sync Ticker Stats
+  useEffect(() => {
+    const loadTicker = async () => {
+      const stats = await fetchBinanceTicker(activeMarket.binanceSymbol);
+      if (stats) {
+        setTickerStats(stats);
+      }
+    };
+    loadTicker();
+    const interval = setInterval(loadTicker, 15000);
+    return () => clearInterval(interval);
+  }, [activeMarket]);
+
+  // Sync Pyth Price via REST & WebSocket
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let isMounted = true;
+
+    const initWebSocket = () => {
+      ws = new WebSocket('wss://hermes.pyth.network/ws');
+
+      ws.onopen = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: "subscribe",
+            ids: [activeMarket.pythId]
+          }));
+        }
+      };
+
+      ws.onmessage = (event) => {
+        if (!isMounted) return;
+        try {
+          const data = JSON.parse(event.data);
+          if (data && data.type === 'value' && data.value && data.value.price) {
+            const priceData = data.value.price;
+            const rawPrice = BigInt(priceData.price);
+            const expo = priceData.expo;
+            const finalPrice = Number(rawPrice) * Math.pow(10, expo);
+            setPrice(finalPrice);
+          }
+        } catch (err) {
+          console.error("WebSocket message parse error", err);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error("WebSocket error", err);
+      };
+
+      ws.onclose = () => {
+        if (isMounted) {
+          setTimeout(initWebSocket, 3000);
+        }
+      };
+    };
+
+    // Load initial REST price
+    fetchPythPrice(activeMarket.pythId).then((initialPrice) => {
+      if (initialPrice && isMounted) {
+        setPrice(initialPrice);
+      }
+    });
+
+    initWebSocket();
+
+    return () => {
+      isMounted = false;
+      if (ws) ws.close();
+    };
+  }, [activeMarket]);
+
+  // Initialize Lightweight Chart Container
   useEffect(() => {
     if (!chartContainerRef.current) return;
     
@@ -96,25 +269,12 @@ export default function ProTradePage() {
       wickDownColor: '#ef4444',
     });
 
-    // Generate some mock historical data ending at 2.45
-    const data = [];
-    let time = Math.floor(Date.now() / 1000) - (100 * 3600); // 100 hours ago
-    let price = 2.05;
-    for (let i = 0; i < 100; i++) {
-      const open = price;
-      const close = i === 99 ? 2.45 : price + (Math.random() - 0.5) * 0.1;
-      const high = Math.max(open, close) + Math.random() * 0.05;
-      const low = Math.min(open, close) - Math.random() * 0.05;
-      data.push({ time, open, high, low, close });
-      price = close;
-      time += 3600; // 1 hour steps
-    }
-    candlestickSeries.setData(data as any);
-    chart.timeScale().fitContent();
+    chartRef.current = chart;
+    seriesRef.current = candlestickSeries;
 
     const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+      if (chartContainerRef.current && chartRef.current) {
+        chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
       }
     };
     window.addEventListener('resize', handleResize);
@@ -122,8 +282,30 @@ export default function ProTradePage() {
     return () => {
       window.removeEventListener('resize', handleResize);
       chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
     };
   }, []);
+
+  // Fetch and Load Historical Chart Data
+  useEffect(() => {
+    let isMounted = true;
+    const loadChartData = async () => {
+      if (!seriesRef.current || !chartRef.current) return;
+      
+      const data = await fetchHistoricalData(activeMarket.binanceSymbol, chartResolution);
+      if (isMounted && data.length > 0) {
+        seriesRef.current.setData(data);
+        chartRef.current.timeScale().fitContent();
+      }
+    };
+    
+    setTimeout(loadChartData, 100);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [activeMarket, chartResolution]);
 
   const handleExecute = () => {
     if (!isConnected) {
@@ -141,14 +323,15 @@ export default function ProTradePage() {
 
     addTransaction({
       type: 'Trade',
-      amount: -numPayAmount, // Deducting cost of position
+      amount: -numPayAmount, 
       asset: 'USDC',
-      network: 'Arbitrum',
+      network: activeMarket.name.split('-')[0],
       takeProfit: takeProfit ? parseFloat(takeProfit) : undefined,
       stopLoss: stopLoss ? parseFloat(stopLoss) : undefined
     });
 
-    alert(`Successfully executed ${leverage}x ${tradeDirection.toUpperCase()} order for ${positionSizeAsset.toFixed(2)} NADO!`);
+    const assetName = activeMarket.name.split('-')[0];
+    alert(`Successfully executed ${leverage}x ${tradeDirection.toUpperCase()} order for ${positionSizeAsset.toFixed(4)} ${assetName}!`);
     setPayAmount('');
     setTakeProfit('');
     setStopLoss('');
@@ -163,37 +346,52 @@ export default function ProTradePage() {
         {/* Market Stats Header */}
         <div className="flex items-center gap-6 px-4 py-2 border-b border-white/5 bg-black/20 overflow-x-auto whitespace-nowrap scrollbar-hide text-sm">
           <div className="flex items-center gap-2">
-            <h1 className="font-bold text-lg">NADO-PERP</h1>
+            <select 
+              value={activeMarket.id} 
+              onChange={(e) => {
+                const selected = MARKETS.find(m => m.id === e.target.value);
+                if (selected) setActiveMarket(selected);
+              }}
+              className="bg-transparent font-bold text-lg outline-none border-b border-dashed border-primary/50 cursor-pointer text-white pr-2 hover:border-primary transition-all"
+            >
+              {MARKETS.map(m => (
+                <option key={m.id} value={m.id} className="bg-[#050b14] text-foreground">{m.name}</option>
+              ))}
+            </select>
             <span className="text-primary bg-primary/10 px-2 py-0.5 rounded text-xs font-bold">100x</span>
           </div>
           
           <div className="flex flex-col">
-            <span className="text-xs text-gray-500">Price</span>
-            <span className="font-bold text-green-400">2.450</span>
+            <span className="text-xs text-gray-500">Oracle Price (Pyth)</span>
+            <span className="font-bold text-green-400">
+              {price.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
+            </span>
           </div>
           <div className="flex flex-col">
             <span className="text-xs text-gray-500">24h Change</span>
-            <span className="font-bold text-green-400">+12.4%</span>
+            <span className={`font-bold ${parseFloat(tickerStats.change24h) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {parseFloat(tickerStats.change24h) >= 0 ? '+' : ''}{tickerStats.change24h}%
+            </span>
           </div>
           <div className="flex flex-col">
             <span className="text-xs text-gray-500">24h High</span>
-            <span className="font-bold">2.580</span>
+            <span className="font-bold">
+              {tickerStats.high24h.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
+            </span>
           </div>
           <div className="flex flex-col">
             <span className="text-xs text-gray-500">24h Low</span>
-            <span className="font-bold">2.120</span>
+            <span className="font-bold">
+              {tickerStats.low24h.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
+            </span>
           </div>
           <div className="flex flex-col">
-            <span className="text-xs text-gray-500">24h Vol (NADO)</span>
-            <span className="font-bold">14.2M</span>
+            <span className="text-xs text-gray-500">24h Vol ({activeMarket.name.split('-')[0]})</span>
+            <span className="font-bold">{tickerStats.volume24h}</span>
           </div>
           <div className="flex flex-col">
             <span className="text-xs text-gray-500">Funding / Countdown</span>
-            <span className="font-bold text-yellow-400">0.0500% / 03:45:12</span>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-xs text-gray-500">Open Interest</span>
-            <span className="font-bold">5.2M NADO</span>
+            <span className="font-bold text-yellow-400">0.0100% / 05:14:22</span>
           </div>
         </div>
 
@@ -205,12 +403,15 @@ export default function ProTradePage() {
             {/* Chart Toolbar */}
             <div className="flex items-center gap-4 p-2 border-b border-white/5 text-xs text-gray-400">
               <span className="text-white font-bold">Time</span>
-              <button className="hover:text-white">1m</button>
-              <button className="hover:text-white">5m</button>
-              <button className="hover:text-white">15m</button>
-              <button className="text-primary font-bold">1H</button>
-              <button className="hover:text-white">4H</button>
-              <button className="hover:text-white">1D</button>
+              {(['1m', '5m', '15m', '1H', '4H', '1D'] as const).map((res) => (
+                <button 
+                  key={res}
+                  onClick={() => setChartResolution(res)}
+                  className={`hover:text-white transition-colors ${chartResolution === res ? 'text-primary font-bold' : ''}`}
+                >
+                  {res}
+                </button>
+              ))}
               <div className="w-px h-4 bg-white/10 mx-2" />
               <button className="hover:text-white flex items-center gap-1">Indicators <ChevronDown size={12}/></button>
               <button className="hover:text-white flex items-center gap-1">Depth <ChevronDown size={12}/></button>
@@ -226,11 +427,13 @@ export default function ProTradePage() {
             <div className="flex-1 flex flex-col">
               <div className="flex items-center justify-between p-2 border-b border-white/5 text-gray-400 font-sans font-bold">
                 <span>Order Book</span>
-                <span className="text-gray-500 font-normal">0.001</span>
+                <span className="text-gray-500 font-normal">
+                  {activeMarket.decimals === 1 ? '0.1' : '0.01'}
+                </span>
               </div>
               <div className="flex justify-between px-2 py-1 text-gray-500">
                 <span>Price (USD)</span>
-                <span>Size (NADO)</span>
+                <span>Size ({activeMarket.name.split('-')[0]})</span>
                 <span>Total</span>
               </div>
               
@@ -239,7 +442,9 @@ export default function ProTradePage() {
                 {orderBookAsks.map((ask, i) => (
                   <div key={i} className="flex justify-between relative py-0.5 group hover:bg-white/5 cursor-pointer">
                     <div className="absolute right-0 top-0 bottom-0 bg-red-500/10" style={{width: `${(ask.total / 50000) * 100}%`}} />
-                    <span className="text-red-400 z-10">{ask.price.toFixed(3)}</span>
+                    <span className="text-red-400 z-10">
+                      {ask.price.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
+                    </span>
                     <span className="text-gray-300 z-10">{ask.size}</span>
                     <span className="text-gray-500 z-10">{ask.total}</span>
                   </div>
@@ -248,8 +453,10 @@ export default function ProTradePage() {
 
               {/* Current Spread/Price */}
               <div className="py-2 flex items-center justify-center gap-2 border-y border-white/5 bg-black/40">
-                <span className="text-lg font-bold text-green-400">2.450</span>
-                <span className="text-gray-500">$2.45</span>
+                <span className="text-lg font-bold text-green-400">
+                  {price.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
+                </span>
+                <span className="text-gray-500">${price.toFixed(2)}</span>
               </div>
 
               {/* Bids (Buy Orders - Green) */}
@@ -257,7 +464,9 @@ export default function ProTradePage() {
                 {orderBookBids.map((bid, i) => (
                   <div key={i} className="flex justify-between relative py-0.5 group hover:bg-white/5 cursor-pointer">
                     <div className="absolute right-0 top-0 bottom-0 bg-green-500/10" style={{width: `${(bid.total / 60000) * 100}%`}} />
-                    <span className="text-green-400 z-10">{bid.price.toFixed(3)}</span>
+                    <span className="text-green-400 z-10">
+                      {bid.price.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
+                    </span>
                     <span className="text-gray-300 z-10">{bid.size}</span>
                     <span className="text-gray-500 z-10">{bid.total}</span>
                   </div>
@@ -278,7 +487,9 @@ export default function ProTradePage() {
               <div className="flex-1 overflow-y-auto px-2 pb-2">
                 {recentTrades.map((trade, i) => (
                   <div key={i} className="flex justify-between py-0.5">
-                    <span className={trade.type === 'buy' ? 'text-green-400' : 'text-red-400'}>{trade.price.toFixed(3)}</span>
+                    <span className={trade.type === 'buy' ? 'text-green-400' : 'text-red-400'}>
+                      {trade.price.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
+                    </span>
                     <span className="text-gray-300">{trade.size}</span>
                     <span className="text-gray-500">{trade.time}</span>
                   </div>
@@ -319,7 +530,7 @@ export default function ProTradePage() {
                 <div className="bg-black/40 border border-white/5 rounded-xl p-3 flex justify-between items-center focus-within:border-primary/50 transition-colors">
                   <span className="text-gray-400 text-sm font-medium">Price</span>
                   <div className="flex items-center gap-2">
-                    <input type="text" placeholder="2.45" className="bg-transparent text-right font-bold outline-none w-24" />
+                    <input type="text" placeholder={price.toString()} className="bg-transparent text-right font-bold outline-none w-24" />
                     <span className="text-gray-500 text-sm">USD</span>
                   </div>
                 </div>
@@ -328,7 +539,7 @@ export default function ProTradePage() {
               {/* Pay Amount Input */}
               <div className="bg-black/40 border border-white/5 rounded-xl p-3 focus-within:border-primary/50 transition-colors">
                 <div className="text-sm text-gray-400 mb-2 flex justify-between font-medium">
-                  <span>Pay</span>
+                  <span>Pay (Margin)</span>
                   <span>Bal: {formatCurrency(isConnected ? balance : 0)}</span>
                 </div>
                 <div className="flex justify-between items-center">
@@ -370,7 +581,9 @@ export default function ProTradePage() {
               <div className="bg-primary/5 border border-primary/10 rounded-lg p-2 flex justify-between items-center text-sm">
                 <span className="text-gray-400">Position Size</span>
                 <div className="text-right">
-                  <div className="font-bold text-white">{positionSizeAsset.toFixed(2)} NADO</div>
+                  <div className="font-bold text-white">
+                    {positionSizeAsset.toFixed(activeMarket.decimals === 1 ? 2 : 4)} {activeMarket.name.split('-')[0]}
+                  </div>
                   <div className="text-gray-500 text-xs">≈ {formatCurrency(positionSizeUsd)}</div>
                 </div>
               </div>
