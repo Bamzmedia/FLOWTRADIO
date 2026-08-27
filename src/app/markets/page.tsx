@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { Search, Star, TrendingUp, TrendingDown, ArrowRight } from 'lucide-react';
+import { Search, Star, TrendingUp, TrendingDown, ArrowRight, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useLocalization } from '@/components/LocalizationContext';
 import Navbar from '@/components/Navbar';
 
@@ -18,14 +18,6 @@ type Market = {
   trending?: boolean;
 };
 
-const PRODUCT_SYMBOL_MAP: Record<string, string> = {
-  'BTC-USD': 'BTC',
-  'ETH-USD': 'ETH',
-  'SOL-USD': 'SOL',
-  'AVAX-USD': 'AVAX',
-  'LINK-USD': 'LINK',
-};
-
 const INITIAL_MARKETS: Market[] = [
   { id: 'nado', symbol: 'NADO', name: 'Nado Token', price: 2.45, change24h: 12.5, volume24h: 15400000, fundingRate: 0.01, oi: 5200000 },
   { id: 'btc', symbol: 'BTC', name: 'Bitcoin', price: 80450.00, change24h: 2.4, volume24h: 845000000, fundingRate: 0.005, oi: 154000000 },
@@ -37,190 +29,101 @@ const INITIAL_MARKETS: Market[] = [
   { id: 'doge', symbol: 'DOGE', name: 'Dogecoin', price: 0.14, change24h: -8.5, volume24h: 85000000, fundingRate: -0.02, oi: 18000000 },
 ];
 
+const COINGECKO_MAP: Record<string, string> = {
+  'bitcoin': 'btc',
+  'ethereum': 'eth',
+  'solana': 'sol',
+  'avalanche-2': 'avax',
+  'chainlink': 'link',
+  'arbitrum': 'arb',
+};
+
 export default function MarketsPage() {
   const { t } = useLocalization();
   const [marketsData, setMarketsData] = useState<Market[]>(INITIAL_MARKETS);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isCachedData, setIsCachedData] = useState(false);
+  const [lastUpdatedTime, setLastUpdatedTime] = useState<string>('');
+  
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<'all' | 'trending' | 'gainers' | 'losers' | 'watchlist'>('all');
   const [favorites, setFavorites] = useState<string[]>(['BTC', 'NADO']);
 
-  // Price direction tracking for green/red flashing CSS animations
-  const [priceDirections, setPriceDirections] = useState<Record<string, 'up' | 'down' | null>>({});
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Fetch prices from CoinGecko Free API with Binance fallback
+  const fetchPrices = async () => {
+    setIsRefreshing(true);
+    let success = false;
+
+    try {
+      const cgUrl = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,avalanche-2,chainlink,arbitrum&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true';
+      const res = await fetch(cgUrl);
+
+      if (res.ok) {
+        const data = await res.json();
+        setMarketsData(prev => prev.map(m => {
+          const cgKey = Object.keys(COINGECKO_MAP).find(k => COINGECKO_MAP[k] === m.id);
+          if (cgKey && data[cgKey]) {
+            const coin = data[cgKey];
+            return {
+              ...m,
+              price: coin.usd || m.price,
+              change24h: coin.usd_24h_change !== undefined ? parseFloat(coin.usd_24h_change.toFixed(2)) : m.change24h,
+              volume24h: coin.usd_24h_vol || m.volume24h,
+            };
+          }
+          return m;
+        }));
+        setIsCachedData(false);
+        success = true;
+      } else {
+        throw new Error(`CoinGecko status ${res.status}`);
+      }
+    } catch (err) {
+      console.warn("CoinGecko fetch failed. Attempting Binance REST fallback...", err);
+      try {
+        const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "LINKUSDT", "ARBUSDT"];
+        const bRes = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`);
+        if (bRes.ok) {
+          const bData = await bRes.json();
+          setMarketsData(prev => prev.map(m => {
+            const ticker = bData.find((t: any) => t.symbol === `${m.symbol}USDT`);
+            if (ticker) {
+              return {
+                ...m,
+                price: parseFloat(ticker.lastPrice),
+                change24h: parseFloat(ticker.priceChangePercent),
+                volume24h: parseFloat(ticker.quoteVolume),
+              };
+            }
+            return m;
+          }));
+          setIsCachedData(false);
+          success = true;
+        }
+      } catch (bErr) {
+        console.error("All live price sources failed. Using cached fallback data.", bErr);
+        setIsCachedData(true);
+      }
+    }
+
+    setLastUpdatedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    setIsRefreshing(false);
+    reset5MinTimer();
+  };
+
+  // Reset 5-minute timer loop
+  const reset5MinTimer = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(fetchPrices, 300000); // 300,000ms = 5 minutes
+  };
 
   useEffect(() => {
-    let ws: WebSocket | null = null;
-    let fallbackInterval: NodeJS.Timeout | null = null;
-    let isMounted = true;
-    let isWsConnected = false;
-
-    // Helper to trigger fallback polling if WebSocket fails/disconnects
-    const startFallbackPolling = () => {
-      if (fallbackInterval) return; // Already polling
-      console.warn("Coinbase WebSocket down. Starting Binance REST fallback polling (4s interval)...");
-
-      const pollBinanceFallback = async () => {
-        if (!isMounted || isWsConnected) return;
-        try {
-          const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "LINKUSDT"];
-          const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data) && isMounted) {
-              const dirs: Record<string, 'up' | 'down' | null> = {};
-              let updatedAny = false;
-
-              setMarketsData(prevMarkets => {
-                const updated = prevMarkets.map(m => {
-                  const ticker = data.find((t: any) => t.symbol === `${m.symbol}USDT`);
-                  if (ticker) {
-                    const newPrice = parseFloat(ticker.lastPrice);
-                    const change24h = parseFloat(ticker.priceChangePercent);
-                    const volume24h = parseFloat(ticker.quoteVolume);
-
-                    if (m.price !== newPrice) {
-                      updatedAny = true;
-                      dirs[m.id] = newPrice > m.price ? 'up' : 'down';
-                    }
-
-                    return {
-                      ...m,
-                      price: newPrice,
-                      change24h: isNaN(change24h) ? m.change24h : change24h,
-                      volume24h: isNaN(volume24h) || volume24h === 0 ? m.volume24h : volume24h,
-                    };
-                  }
-                  return m;
-                });
-
-                if (updatedAny) {
-                  setPriceDirections(dirs);
-                  setTimeout(() => {
-                    if (isMounted) setPriceDirections({});
-                  }, 400);
-                }
-
-                return updated;
-              });
-            }
-          }
-        } catch (err) {
-          console.error("Binance fallback polling error:", err);
-        }
-      };
-
-      pollBinanceFallback();
-      fallbackInterval = setInterval(pollBinanceFallback, 4000);
-    };
-
-    const stopFallbackPolling = () => {
-      if (fallbackInterval) {
-        clearInterval(fallbackInterval);
-        fallbackInterval = null;
-      }
-    };
-
-    // 1. Connect to Coinbase WebSocket feed
-    const connectCoinbaseWS = () => {
-      try {
-        ws = new WebSocket('wss://ws-feed.exchange.coinbase.com');
-
-        ws.onopen = () => {
-          if (!isMounted) return;
-          isWsConnected = true;
-          stopFallbackPolling();
-          console.log("Connected to Coinbase WebSocket Feed.");
-
-          // Send subscription message
-          const subscribeMsg = {
-            type: "subscribe",
-            product_ids: ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "LINK-USD"],
-            channels: ["ticker"]
-          };
-          if (ws) {
-            ws.send(JSON.stringify(subscribeMsg));
-          }
-        };
-
-        ws.onmessage = (event) => {
-          if (!isMounted) return;
-          try {
-            const data = JSON.parse(event.data);
-
-            if (data.type === 'ticker' && data.product_id && data.price) {
-              const symbol = PRODUCT_SYMBOL_MAP[data.product_id];
-              if (!symbol) return;
-
-              const newPrice = parseFloat(data.price);
-              const open24h = data.open_24h ? parseFloat(data.open_24h) : 0;
-              const change24h = open24h > 0 ? ((newPrice - open24h) / open24h) * 100 : 0;
-              const baseVolume = data.volume_24h ? parseFloat(data.volume_24h) : 0;
-              const volume24h = baseVolume * newPrice;
-
-              setMarketsData(prevMarkets => {
-                let hasChanged = false;
-                const nextDirs: Record<string, 'up' | 'down' | null> = {};
-
-                const updated = prevMarkets.map(m => {
-                  if (m.symbol === symbol) {
-                    if (m.price !== newPrice) {
-                      hasChanged = true;
-                      nextDirs[m.id] = newPrice > m.price ? 'up' : 'down';
-                    }
-
-                    return {
-                      ...m,
-                      price: newPrice,
-                      change24h: change24h !== 0 ? parseFloat(change24h.toFixed(2)) : m.change24h,
-                      volume24h: volume24h > 0 ? volume24h : m.volume24h,
-                    };
-                  }
-                  return m;
-                });
-
-                if (hasChanged) {
-                  setPriceDirections(prev => ({ ...prev, ...nextDirs }));
-                  setTimeout(() => {
-                    if (isMounted) setPriceDirections({});
-                  }, 400);
-                }
-
-                return updated;
-              });
-            }
-          } catch (err) {
-            console.error("Error parsing Coinbase WebSocket message:", err);
-          }
-        };
-
-        ws.onerror = (err) => {
-          console.warn("Coinbase WebSocket error:", err);
-          isWsConnected = false;
-          startFallbackPolling();
-        };
-
-        ws.onclose = () => {
-          if (!isMounted) return;
-          console.warn("Coinbase WebSocket closed.");
-          isWsConnected = false;
-          startFallbackPolling();
-        };
-      } catch (err) {
-        console.error("Failed to initialize Coinbase WebSocket:", err);
-        startFallbackPolling();
-      }
-    };
-
-    connectCoinbaseWS();
+    fetchPrices();
 
     return () => {
-      isMounted = false;
-      isWsConnected = false;
-      if (ws) {
-        ws.onclose = null;
-        ws.onerror = null;
-        ws.close();
-      }
-      stopFallbackPolling();
+      if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
 
@@ -292,7 +195,7 @@ export default function MarketsPage() {
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-primary/10 rounded-full blur-[150px] -z-10 mix-blend-screen pointer-events-none" />
 
         {/* Page Header */}
-        <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
+        <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div>
             <h1 className="text-4xl font-extrabold mb-2 bg-gradient-to-r from-white via-gray-100 to-gray-400 bg-clip-text text-transparent">
               Perpetual Markets
@@ -310,6 +213,36 @@ export default function MarketsPage() {
               className="bg-black/40 border border-white/10 rounded-full py-3 pl-12 pr-6 w-full md:w-80 focus:border-primary/50 outline-none transition-colors"
             />
           </div>
+        </div>
+
+        {/* Control Bar: Last Updated Timestamp, Rate-Lock Badge, & Refresh Button */}
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-6 bg-black/40 border border-white/10 rounded-2xl p-4 glass-panel">
+          <div className="flex items-center gap-3 text-sm">
+            <span className="text-gray-400 font-medium">
+              Last updated: <span className="text-white font-mono font-bold">{lastUpdatedTime || '--:--:--'}</span>
+            </span>
+            <span className="text-gray-600">|</span>
+            <span className="text-xs text-gray-400">5-min auto-refresh</span>
+            
+            {isCachedData ? (
+              <span className="flex items-center gap-1.5 bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 px-2.5 py-1 rounded-full text-xs font-semibold">
+                <AlertCircle size={12} /> Using cached data
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 bg-green-500/10 border border-green-500/30 text-green-400 px-2.5 py-1 rounded-full text-xs font-semibold">
+                <CheckCircle2 size={12} /> Live Rates
+              </span>
+            )}
+          </div>
+
+          <button
+            onClick={fetchPrices}
+            disabled={isRefreshing}
+            className="flex items-center gap-2 bg-white/5 hover:bg-primary hover:text-background text-primary border border-primary/30 px-4 py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-lg"
+          >
+            <RefreshCw size={14} className={isRefreshing ? "animate-spin text-primary" : ""} />
+            {isRefreshing ? "Fetching Rates..." : "🔄 Refresh Prices"}
+          </button>
         </div>
 
         {/* Filters / Categories */}
@@ -392,16 +325,8 @@ export default function MarketsPage() {
                         </div>
                       </td>
                       
-                      <td className="py-4 px-4 text-right font-mono font-medium overflow-hidden text-ellipsis">
-                        <span className={`inline-block transition-all duration-300 ${
-                          priceDirections[market.id] === 'up' 
-                            ? 'text-green-400 font-bold scale-105 animate-pulse' 
-                            : priceDirections[market.id] === 'down' 
-                              ? 'text-red-400 font-bold scale-105 animate-pulse' 
-                              : 'text-white'
-                        }`}>
-                          {formatMarketPrice(market.price)}
-                        </span>
+                      <td className="py-4 px-4 text-right font-mono font-medium text-white overflow-hidden text-ellipsis">
+                        {formatMarketPrice(market.price)}
                       </td>
                       
                       <td className="py-4 px-4 text-right font-mono font-medium overflow-hidden text-ellipsis">

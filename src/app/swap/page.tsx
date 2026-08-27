@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Navbar from '@/components/Navbar';
 import { useLocalization } from '@/components/LocalizationContext';
 import { useWallet } from '@/components/WalletContext';
-import { ArrowDown, Settings, Zap } from 'lucide-react';
+import { ArrowDown, Settings, Zap, Clock, AlertTriangle, RefreshCw } from 'lucide-react';
 
 export default function SwapPage() {
   const { t, formatCurrency, slippage } = useLocalization();
@@ -12,12 +12,45 @@ export default function SwapPage() {
   
   const [payAmount, setPayAmount] = useState('');
   
+  // Rate Lock Expiration Timer (10 minutes = 600 seconds)
+  const [timeLeft, setTimeLeft] = useState<number>(600);
+  const [isPriceExpired, setIsPriceExpired] = useState<boolean>(false);
+  
   // Mock exchange rate: 1 USDC = 0.408 NADO (since NADO is ~$2.45)
   const exchangeRate = 0.408;
   const numPayAmount = parseFloat(payAmount) || 0;
   const receiveAmount = numPayAmount * exchangeRate;
 
+  // 10-minute countdown timer loop
+  useEffect(() => {
+    if (timeLeft <= 0) {
+      setIsPriceExpired(true);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          setIsPriceExpired(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [timeLeft]);
+
+  const handleAcceptUpdatedRate = () => {
+    setTimeLeft(600); // Reset 10-minute timer
+    setIsPriceExpired(false);
+  };
+
   const handleSwap = () => {
+    if (isPriceExpired) {
+      handleAcceptUpdatedRate();
+      return;
+    }
     if (!isConnected) {
       alert("Please connect your wallet first!");
       return;
@@ -44,6 +77,13 @@ export default function SwapPage() {
 
     alert(`Successfully swapped ${numPayAmount} USDC for ${receiveAmount.toFixed(2)} NADO!`);
     setPayAmount('');
+    handleAcceptUpdatedRate(); // Reset rate timer after swap
+  };
+
+  const formatTimer = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
   return (
@@ -64,12 +104,33 @@ export default function SwapPage() {
             
             <div className="flex justify-between items-center mb-6">
               <span className="font-bold text-lg">{t('swapTitle')}</span>
-              <div className="flex gap-3">
+              
+              {/* Rate Lock Timer Badge */}
+              <div className="flex items-center gap-2">
+                <span className={`text-xs font-mono px-2.5 py-1 rounded-full border flex items-center gap-1.5 font-bold ${
+                  isPriceExpired 
+                    ? 'bg-red-500/10 border-red-500/30 text-red-400' 
+                    : 'bg-primary/10 border-primary/30 text-primary'
+                }`}>
+                  <Clock size={12} />
+                  {isPriceExpired ? '00:00' : formatTimer(timeLeft)}
+                </span>
+
                 <button className="text-gray-400 hover:text-white transition-colors" title="Settings">
-                  <Settings size={20} />
+                  <Settings size={18} />
                 </button>
               </div>
             </div>
+
+            {/* Price Expired Warning Banner */}
+            {isPriceExpired && (
+              <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-2xl flex items-center justify-between gap-2 text-xs text-red-400">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={16} className="flex-shrink-0" />
+                  <span>Price expired. Click 'Accept Updated Rate' to continue.</span>
+                </div>
+              </div>
+            )}
 
             {/* Pay Section */}
             <div className="bg-black/40 border border-white/5 rounded-2xl p-4 focus-within:border-primary/50 transition-colors mb-2">
@@ -138,15 +199,28 @@ export default function SwapPage() {
             <button 
               onClick={handleSwap}
               disabled={!isConnected && false}
-              className={`w-full font-bold py-4 rounded-2xl transition-all duration-300 shadow-lg text-lg ${
-                !isConnected 
-                  ? 'bg-primary/20 text-primary hover:bg-primary/30' 
-                  : numPayAmount <= 0 
-                    ? 'bg-white/5 text-gray-500 cursor-not-allowed'
-                    : 'bg-primary text-background hover:bg-primary/80 shadow-[0_0_20px_rgba(0,240,255,0.3)]'
+              className={`w-full font-bold py-4 rounded-2xl transition-all duration-300 shadow-lg text-lg flex items-center justify-center gap-2 ${
+                isPriceExpired
+                  ? 'bg-yellow-500 text-background hover:bg-yellow-400 shadow-[0_0_20px_rgba(234,179,8,0.4)] cursor-pointer'
+                  : !isConnected 
+                    ? 'bg-primary/20 text-primary hover:bg-primary/30' 
+                    : numPayAmount <= 0 
+                      ? 'bg-white/5 text-gray-500 cursor-not-allowed'
+                      : 'bg-primary text-background hover:bg-primary/80 shadow-[0_0_20px_rgba(0,240,255,0.3)]'
               }`}
             >
-              {!isConnected ? t('connect') : numPayAmount <= 0 ? 'Enter an amount' : t('confirmSwap')}
+              {isPriceExpired ? (
+                <>
+                  <RefreshCw size={18} />
+                  Accept Updated Rate
+                </>
+              ) : !isConnected ? (
+                t('connect')
+              ) : numPayAmount <= 0 ? (
+                'Enter an amount'
+              ) : (
+                t('confirmSwap')
+              )}
             </button>
           </div>
         </div>
