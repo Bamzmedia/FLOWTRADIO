@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
 import { Search, Star, TrendingUp, TrendingDown, ArrowRight } from 'lucide-react';
 import { useLocalization } from '@/components/LocalizationContext';
@@ -20,7 +20,6 @@ type Market = {
 
 export default function MarketsPage() {
   const { t, language, setLanguage, currency, setCurrency, formatCurrency } = useLocalization();
-  const [showSettings, setShowSettings] = useState(false);
   const [marketsData, setMarketsData] = useState<Market[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   
@@ -28,41 +27,40 @@ export default function MarketsPage() {
   const [activeCategory, setActiveCategory] = useState<'all' | 'trending' | 'gainers' | 'losers' | 'watchlist'>('all');
   const [favorites, setFavorites] = useState<string[]>(['BTC', 'NADO']);
 
-  // Price tracking for live tick updates & visual flash indications
-  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+  // Price direction tracking for blinking flash indicator
   const [priceDirections, setPriceDirections] = useState<Record<string, 'up' | 'down' | null>>({});
-  const prevPricesRef = useRef<Record<string, number>>({});
 
-  // Sync REST market prices every 2 seconds
+  // Sync market data via API every 1 second for active tickers
   useEffect(() => {
     const fetchMarkets = () => {
       fetch('/api/markets')
         .then(res => res.json())
         .then(data => {
           const fetchedMarkets: Market[] = data.data || [];
-          setMarketsData(fetchedMarkets);
-          setIsLoading(false);
-
-          // Update live prices and set directional flash flags if prices changed
-          setLivePrices(prev => {
-            const next = { ...prev };
+          
+          setMarketsData(current => {
+            const nextDirs: Record<string, 'up' | 'down' | null> = {};
             fetchedMarkets.forEach(m => {
-              const oldPrice = prevPricesRef.current[m.id] || m.price;
-              if (m.price !== oldPrice) {
-                setPriceDirections(dir => ({
-                  ...dir,
-                  [m.id]: m.price > oldPrice ? 'up' : 'down'
-                }));
-                // Reset flash state after 400ms
-                setTimeout(() => {
-                  setPriceDirections(dir => ({ ...dir, [m.id]: null }));
-                }, 400);
+              const currentItem = current.find(c => c.id === m.id);
+              if (currentItem) {
+                if (m.price > currentItem.price) {
+                  nextDirs[m.id] = 'up';
+                } else if (m.price < currentItem.price) {
+                  nextDirs[m.id] = 'down';
+                }
               }
-              next[m.id] = m.price;
-              prevPricesRef.current[m.id] = m.price;
             });
-            return next;
+            
+            // Apply flashing directions
+            setPriceDirections(nextDirs);
+            // Reset flash styling after 500ms
+            setTimeout(() => {
+              setPriceDirections({});
+            }, 500);
+            
+            return fetchedMarkets;
           });
+          setIsLoading(false);
         })
         .catch(err => {
           console.error("Failed to fetch live markets data:", err);
@@ -71,45 +69,10 @@ export default function MarketsPage() {
     };
 
     fetchMarkets();
-    const interval = setInterval(fetchMarkets, 2000);
+    const interval = setInterval(fetchMarkets, 1000);
 
     return () => clearInterval(interval);
   }, []);
-
-  // Simulate sub-second micro-tick fluctuations so prices "pulse" actively in real-time
-  useEffect(() => {
-    if (marketsData.length === 0) return;
-
-    const tickInterval = setInterval(() => {
-      setLivePrices(prev => {
-        const next = { ...prev };
-        marketsData.forEach(m => {
-          const currentPrice = next[m.id] || m.price;
-          if (currentPrice === 0) return;
-
-          // Introduce a micro-variation (0.005% fluctuation)
-          const volatility = m.symbol === 'NADO' ? 0.0001 : 0.00008; 
-          const change = currentPrice * volatility * (Math.random() - 0.5);
-          const newPrice = currentPrice + change;
-
-          next[m.id] = newPrice;
-          
-          // Briefly flash micro-movements
-          setPriceDirections(dir => ({
-            ...dir,
-            [m.id]: change > 0 ? 'up' : 'down'
-          }));
-          
-          setTimeout(() => {
-            setPriceDirections(dir => ({ ...dir, [m.id]: null }));
-          }, 200);
-        });
-        return next;
-      });
-    }, 350);
-
-    return () => clearInterval(tickInterval);
-  }, [marketsData]);
 
   const toggleFavorite = (symbol: string) => {
     setFavorites(prev => 
@@ -132,13 +95,14 @@ export default function MarketsPage() {
     }).format(price);
   };
 
-  // Precise large number formatting for volumes and OI
-  const formatLargeNumber = (num: number) => {
+  // Compact number formatting for large stats (e.g. $845.2M instead of truncated digits)
+  const formatCompactNumber = (num: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
+      notation: 'compact',
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1
     }).format(num);
   };
 
@@ -232,17 +196,17 @@ export default function MarketsPage() {
         ) : (
           <div className="glass-panel rounded-3xl overflow-hidden border-t-primary/20 border-t shadow-2xl">
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[800px]">
+              <table className="w-full text-left border-collapse min-w-[800px] table-fixed">
                 <thead>
                   <tr className="bg-black/20 text-gray-400 text-xs uppercase tracking-wider border-b border-white/5">
-                    <th className="py-4 px-6 font-semibold w-12 text-center"></th>
-                    <th className="py-4 px-6 font-semibold">Market</th>
-                    <th className="py-4 px-6 font-semibold text-right">Price</th>
-                    <th className="py-4 px-6 font-semibold text-right">24h Change</th>
-                    <th className="py-4 px-6 font-semibold text-right">24h Volume</th>
-                    <th className="py-4 px-6 font-semibold text-right">Funding Rate</th>
-                    <th className="py-4 px-6 font-semibold text-right">Open Interest</th>
-                    <th className="py-4 px-6 font-semibold text-right">Action</th>
+                    <th className="py-4 px-4 w-12 text-center font-semibold"></th>
+                    <th className="py-4 px-4 w-[22%] text-left font-semibold">Market</th>
+                    <th className="py-4 px-4 w-[16%] text-right font-semibold">Price</th>
+                    <th className="py-4 px-4 w-[14%] text-right font-semibold">24H Change</th>
+                    <th className="py-4 px-4 w-[16%] text-right font-semibold">24H Volume</th>
+                    <th className="py-4 px-4 w-[12%] text-right font-semibold">Funding Rate</th>
+                    <th className="py-4 px-4 w-[12%] text-right font-semibold">Open Interest</th>
+                    <th className="py-4 px-4 w-[8%] text-right font-semibold"></th>
                   </tr>
                 </thead>
                 <tbody className="text-sm divide-y divide-white/5">
@@ -255,7 +219,7 @@ export default function MarketsPage() {
                   ) : (
                     filteredMarkets.map((market) => (
                       <tr key={market.id} className="hover:bg-white/5 transition-colors group">
-                        <td className="py-4 px-6 text-center">
+                        <td className="py-4 px-4 text-center">
                           <button 
                             onClick={() => toggleFavorite(market.symbol)}
                             className="hover:scale-110 transition-transform"
@@ -267,26 +231,26 @@ export default function MarketsPage() {
                           </button>
                         </td>
                         
-                        <td className="py-4 px-6">
+                        <td className="py-4 px-4 text-left overflow-hidden text-ellipsis">
                           <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center font-bold text-xs shadow-inner">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center font-bold text-xs shadow-inner flex-shrink-0">
                               {market.symbol[0]}
                             </div>
-                            <div>
+                            <div className="min-w-0">
                               <div className="font-bold text-white group-hover:text-primary transition-colors cursor-pointer flex items-center gap-1.5">
-                                {market.symbol}
+                                <span className="truncate">{market.symbol}</span>
                                 {market.symbol === 'NADO' && (
-                                  <span className="text-[10px] bg-primary/20 text-primary border border-primary/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                                  <span className="text-[10px] bg-primary/20 text-primary border border-primary/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider flex-shrink-0">
                                     Testnet
                                   </span>
                                 )}
                               </div>
-                              <div className="text-gray-500 text-xs">{market.name}</div>
+                              <div className="text-gray-500 text-xs truncate">{market.name}</div>
                             </div>
                           </div>
                         </td>
                         
-                        <td className="py-4 px-6 text-right font-mono font-medium">
+                        <td className="py-4 px-4 text-right font-mono font-medium overflow-hidden text-ellipsis">
                           <span className={`inline-block transition-all duration-300 ${
                             priceDirections[market.id] === 'up' 
                               ? 'text-green-400 font-bold scale-105' 
@@ -294,32 +258,32 @@ export default function MarketsPage() {
                                 ? 'text-red-400 font-bold scale-105' 
                                 : 'text-white'
                           }`}>
-                            {formatMarketPrice(livePrices[market.id] || market.price)}
+                            {formatMarketPrice(market.price)}
                           </span>
                         </td>
                         
-                        <td className="py-4 px-6 text-right font-mono font-medium">
+                        <td className="py-4 px-4 text-right font-mono font-medium overflow-hidden text-ellipsis">
                           <div className={`flex items-center justify-end gap-1 ${market.change24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                             {market.change24h >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
                             {Math.abs(market.change24h).toFixed(2)}%
                           </div>
                         </td>
                         
-                        <td className="py-4 px-6 text-right text-gray-300 font-mono">
-                          {formatLargeNumber(market.volume24h)}
+                        <td className="py-4 px-4 text-right text-gray-300 font-mono overflow-hidden text-ellipsis">
+                          {formatCompactNumber(market.volume24h)}
                         </td>
                         
-                        <td className="py-4 px-6 text-right font-mono">
+                        <td className="py-4 px-4 text-right font-mono overflow-hidden text-ellipsis">
                           <span className={market.fundingRate > 0 ? 'text-yellow-400' : 'text-primary'}>
                             {market.fundingRate > 0 ? '+' : ''}{market.fundingRate.toFixed(4)}%
                           </span>
                         </td>
                         
-                        <td className="py-4 px-6 text-right text-gray-400 font-mono">
-                          {formatLargeNumber(market.oi)}
+                        <td className="py-4 px-4 text-right text-gray-400 font-mono overflow-hidden text-ellipsis">
+                          {formatCompactNumber(market.oi)}
                         </td>
 
-                        <td className="py-4 px-6 text-right">
+                        <td className="py-4 px-4 text-right">
                           <Link href="/">
                             <button className="glass-panel bg-white/5 hover:bg-primary hover:text-background text-primary px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1 ml-auto">
                               Trade <ArrowRight size={12} />
