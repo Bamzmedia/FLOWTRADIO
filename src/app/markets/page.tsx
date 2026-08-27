@@ -28,19 +28,56 @@ export default function MarketsPage() {
   const [activeCategory, setActiveCategory] = useState<'all' | 'trending' | 'gainers' | 'losers' | 'watchlist'>('all');
   const [favorites, setFavorites] = useState<string[]>(['BTC', 'NADO']);
 
+  // Auto-refresh prices and stats every 5 seconds
   useEffect(() => {
-    fetch('/api/markets')
-      .then(res => res.json())
-      .then(data => {
-        setMarketsData(data.data || []);
-        setIsLoading(false);
-      });
+    const fetchMarkets = () => {
+      fetch('/api/markets')
+        .then(res => res.json())
+        .then(data => {
+          setMarketsData(data.data || []);
+          setIsLoading(false);
+        })
+        .catch(err => {
+          console.error("Failed to fetch live markets data:", err);
+          setIsLoading(false);
+        });
+    };
+
+    fetchMarkets();
+    const interval = setInterval(fetchMarkets, 5000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const toggleFavorite = (symbol: string) => {
     setFavorites(prev => 
       prev.includes(symbol) ? prev.filter(s => s !== symbol) : [...prev, symbol]
     );
+  };
+
+  // Dynamic formatting for token prices (up to 6 decimals for low-cap coins)
+  const formatMarketPrice = (price: number) => {
+    if (price === 0) return "$0.00";
+    let decimals = 2;
+    if (price < 0.01) decimals = 6;
+    else if (price < 1) decimals = 4;
+
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    }).format(price);
+  };
+
+  // Precise large number formatting for volumes and OI
+  const formatLargeNumber = (num: number) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(num);
   };
 
   // Filter and Sort Logic
@@ -73,7 +110,7 @@ export default function MarketsPage() {
   }, [searchQuery, activeCategory, favorites, marketsData]);
 
   return (
-    <div className="min-h-screen text-foreground font-sans flex flex-col pb-20 relative">
+    <div className="min-h-screen text-foreground font-sans flex flex-col pb-20 relative bg-background">
       <Navbar />
 
       <main className="flex-1 flex flex-col p-6 md:p-12 relative max-w-7xl mx-auto w-full">
@@ -83,7 +120,9 @@ export default function MarketsPage() {
         {/* Page Header */}
         <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div>
-            <h1 className="text-4xl font-extrabold mb-2">Perpetual Markets</h1>
+            <h1 className="text-4xl font-extrabold mb-2 bg-gradient-to-r from-white via-gray-100 to-gray-400 bg-clip-text text-transparent">
+              Perpetual Markets
+            </h1>
             <p className="text-gray-400">Discover, track, and trade regional and global crypto assets.</p>
           </div>
 
@@ -134,14 +173,14 @@ export default function MarketsPage() {
               <table className="w-full text-left border-collapse min-w-[800px]">
                 <thead>
                   <tr className="bg-black/20 text-gray-400 text-xs uppercase tracking-wider border-b border-white/5">
-                    <th className="py-4 px-6 font-medium w-12"></th>
-                    <th className="py-4 px-6 font-medium">Market</th>
-                    <th className="py-4 px-6 font-medium text-right">Price</th>
-                    <th className="py-4 px-6 font-medium text-right">24h Change</th>
-                    <th className="py-4 px-6 font-medium text-right">24h Volume</th>
-                    <th className="py-4 px-6 font-medium text-right">Funding Rate</th>
-                    <th className="py-4 px-6 font-medium text-right">Open Interest</th>
-                    <th className="py-4 px-6 font-medium text-right">Action</th>
+                    <th className="py-4 px-6 font-semibold w-12 text-center"></th>
+                    <th className="py-4 px-6 font-semibold">Market</th>
+                    <th className="py-4 px-6 font-semibold text-right">Price</th>
+                    <th className="py-4 px-6 font-semibold text-right">24h Change</th>
+                    <th className="py-4 px-6 font-semibold text-right">24h Volume</th>
+                    <th className="py-4 px-6 font-semibold text-right">Funding Rate</th>
+                    <th className="py-4 px-6 font-semibold text-right">Open Interest</th>
+                    <th className="py-4 px-6 font-semibold text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="text-sm divide-y divide-white/5">
@@ -172,31 +211,42 @@ export default function MarketsPage() {
                               {market.symbol[0]}
                             </div>
                             <div>
-                              <div className="font-bold text-white group-hover:text-primary transition-colors cursor-pointer">{market.symbol}</div>
+                              <div className="font-bold text-white group-hover:text-primary transition-colors cursor-pointer flex items-center gap-1.5">
+                                {market.symbol}
+                                {market.symbol === 'NADO' && (
+                                  <span className="text-[10px] bg-primary/20 text-primary border border-primary/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                                    Testnet
+                                  </span>
+                                )}
+                              </div>
                               <div className="text-gray-500 text-xs">{market.name}</div>
                             </div>
                           </div>
                         </td>
                         
                         <td className="py-4 px-6 text-right font-mono font-medium">
-                          {formatCurrency(market.price)}
+                          {formatMarketPrice(market.price)}
                         </td>
                         
-                        <td className={`py-4 px-6 text-right font-mono font-medium flex items-center justify-end gap-1 ${market.change24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {market.change24h >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-                          {Math.abs(market.change24h)}%
+                        <td className="py-4 px-6 text-right font-mono font-medium">
+                          <div className={`flex items-center justify-end gap-1 ${market.change24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {market.change24h >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+                            {Math.abs(market.change24h).toFixed(2)}%
+                          </div>
                         </td>
                         
                         <td className="py-4 px-6 text-right text-gray-300 font-mono">
-                          {formatCurrency(market.volume24h)}
+                          {formatLargeNumber(market.volume24h)}
                         </td>
                         
-                        <td className={`py-4 px-6 text-right font-mono ${market.fundingRate > 0 ? 'text-yellow-400' : 'text-primary'}`}>
-                          {market.fundingRate > 0 ? '+' : ''}{market.fundingRate}%
+                        <td className="py-4 px-6 text-right font-mono">
+                          <span className={market.fundingRate > 0 ? 'text-yellow-400' : 'text-primary'}>
+                            {market.fundingRate > 0 ? '+' : ''}{market.fundingRate.toFixed(4)}%
+                          </span>
                         </td>
                         
                         <td className="py-4 px-6 text-right text-gray-400 font-mono">
-                          {formatCurrency(market.oi)}
+                          {formatLargeNumber(market.oi)}
                         </td>
 
                         <td className="py-4 px-6 text-right">
