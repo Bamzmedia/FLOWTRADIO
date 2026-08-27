@@ -18,6 +18,14 @@ type Market = {
   trending?: boolean;
 };
 
+const PRODUCT_SYMBOL_MAP: Record<string, string> = {
+  'BTC-USD': 'BTC',
+  'ETH-USD': 'ETH',
+  'SOL-USD': 'SOL',
+  'AVAX-USD': 'AVAX',
+  'LINK-USD': 'LINK',
+};
+
 const INITIAL_MARKETS: Market[] = [
   { id: 'nado', symbol: 'NADO', name: 'Nado Token', price: 2.45, change24h: 12.5, volume24h: 15400000, fundingRate: 0.01, oi: 5200000 },
   { id: 'btc', symbol: 'BTC', name: 'Bitcoin', price: 80450.00, change24h: 2.4, volume24h: 845000000, fundingRate: 0.005, oi: 154000000 },
@@ -30,113 +38,189 @@ const INITIAL_MARKETS: Market[] = [
 ];
 
 export default function MarketsPage() {
-  const { t, formatCurrency } = useLocalization();
+  const { t } = useLocalization();
   const [marketsData, setMarketsData] = useState<Market[]>(INITIAL_MARKETS);
-  
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<'all' | 'trending' | 'gainers' | 'losers' | 'watchlist'>('all');
   const [favorites, setFavorites] = useState<string[]>(['BTC', 'NADO']);
 
-  // Price direction tracking for blinking flash indicator
+  // Price direction tracking for green/red flashing CSS animations
   const [priceDirections, setPriceDirections] = useState<Record<string, 'up' | 'down' | null>>({});
 
-  // 100% Dedicated Live Binance WebSocket Stream Hook
   useEffect(() => {
     let ws: WebSocket | null = null;
-    let reconnectTimer: NodeJS.Timeout | null = null;
+    let fallbackInterval: NodeJS.Timeout | null = null;
     let isMounted = true;
+    let isWsConnected = false;
 
-    const streams = [
-      'btcusdt@ticker',
-      'ethusdt@ticker',
-      'solusdt@ticker',
-      'avaxusdt@ticker',
-      'linkusdt@ticker',
-      'arbusdt@ticker',
-      'dogeusdt@ticker'
-    ].join('/');
+    // Helper to trigger fallback polling if WebSocket fails/disconnects
+    const startFallbackPolling = () => {
+      if (fallbackInterval) return; // Already polling
+      console.warn("Coinbase WebSocket down. Starting Binance REST fallback polling (4s interval)...");
 
-    const wsUrl = `wss://stream.binance.com:9443/stream?streams=${streams}`;
-
-    const connect = () => {
-      if (!isMounted) return;
-
-      ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        console.log("Connected to Binance Live WebSocket Market Stream.");
-      };
-
-      ws.onmessage = (event) => {
-        if (!isMounted) return;
+      const pollBinanceFallback = async () => {
+        if (!isMounted || isWsConnected) return;
         try {
-          const payload = JSON.parse(event.data);
-          const data = payload.data || payload;
+          const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "LINKUSDT"];
+          const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && isMounted) {
+              const dirs: Record<string, 'up' | 'down' | null> = {};
+              let updatedAny = false;
 
-          if (data && data.s && data.c) {
-            const symbol = data.s.replace('USDT', '');
-            const newPrice = parseFloat(data.c);
-            const change24h = parseFloat(data.P);
-            const volume24h = parseFloat(data.q);
+              setMarketsData(prevMarkets => {
+                const updated = prevMarkets.map(m => {
+                  const ticker = data.find((t: any) => t.symbol === `${m.symbol}USDT`);
+                  if (ticker) {
+                    const newPrice = parseFloat(ticker.lastPrice);
+                    const change24h = parseFloat(ticker.priceChangePercent);
+                    const volume24h = parseFloat(ticker.quoteVolume);
 
-            setMarketsData(prevMarkets => {
-              let hasChanged = false;
-              const nextDirs: Record<string, 'up' | 'down' | null> = {};
+                    if (m.price !== newPrice) {
+                      updatedAny = true;
+                      dirs[m.id] = newPrice > m.price ? 'up' : 'down';
+                    }
 
-              const updated = prevMarkets.map(m => {
-                if (m.symbol === symbol) {
-                  if (m.price !== newPrice) {
-                    hasChanged = true;
-                    nextDirs[m.id] = newPrice > m.price ? 'up' : 'down';
+                    return {
+                      ...m,
+                      price: newPrice,
+                      change24h: isNaN(change24h) ? m.change24h : change24h,
+                      volume24h: isNaN(volume24h) || volume24h === 0 ? m.volume24h : volume24h,
+                    };
                   }
+                  return m;
+                });
 
-                  return {
-                    ...m,
-                    price: newPrice,
-                    change24h: isNaN(change24h) ? m.change24h : change24h,
-                    volume24h: isNaN(volume24h) || volume24h === 0 ? m.volume24h : volume24h,
-                  };
+                if (updatedAny) {
+                  setPriceDirections(dirs);
+                  setTimeout(() => {
+                    if (isMounted) setPriceDirections({});
+                  }, 400);
                 }
-                return m;
+
+                return updated;
               });
-
-              if (hasChanged) {
-                setPriceDirections(prev => ({ ...prev, ...nextDirs }));
-                setTimeout(() => {
-                  if (isMounted) setPriceDirections({});
-                }, 400);
-              }
-
-              return updated;
-            });
+            }
           }
         } catch (err) {
-          console.error("Error parsing WebSocket event:", err);
+          console.error("Binance fallback polling error:", err);
         }
       };
 
-      ws.onerror = (err) => {
-        console.warn("WebSocket connection error. Retrying in 3s...", err);
-      };
-
-      ws.onclose = () => {
-        if (!isMounted) return;
-        console.warn("WebSocket closed. Triggering reconnect in 3 seconds...");
-        reconnectTimer = setTimeout(() => {
-          connect();
-        }, 3000); // Fixed 3-second retry interval
-      };
+      pollBinanceFallback();
+      fallbackInterval = setInterval(pollBinanceFallback, 4000);
     };
 
-    connect();
+    const stopFallbackPolling = () => {
+      if (fallbackInterval) {
+        clearInterval(fallbackInterval);
+        fallbackInterval = null;
+      }
+    };
+
+    // 1. Connect to Coinbase WebSocket feed
+    const connectCoinbaseWS = () => {
+      try {
+        ws = new WebSocket('wss://ws-feed.exchange.coinbase.com');
+
+        ws.onopen = () => {
+          if (!isMounted) return;
+          isWsConnected = true;
+          stopFallbackPolling();
+          console.log("Connected to Coinbase WebSocket Feed.");
+
+          // Send subscription message
+          const subscribeMsg = {
+            type: "subscribe",
+            product_ids: ["BTC-USD", "ETH-USD", "SOL-USD", "AVAX-USD", "LINK-USD"],
+            channels: ["ticker"]
+          };
+          if (ws) {
+            ws.send(JSON.stringify(subscribeMsg));
+          }
+        };
+
+        ws.onmessage = (event) => {
+          if (!isMounted) return;
+          try {
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'ticker' && data.product_id && data.price) {
+              const symbol = PRODUCT_SYMBOL_MAP[data.product_id];
+              if (!symbol) return;
+
+              const newPrice = parseFloat(data.price);
+              const open24h = data.open_24h ? parseFloat(data.open_24h) : 0;
+              const change24h = open24h > 0 ? ((newPrice - open24h) / open24h) * 100 : 0;
+              const baseVolume = data.volume_24h ? parseFloat(data.volume_24h) : 0;
+              const volume24h = baseVolume * newPrice;
+
+              setMarketsData(prevMarkets => {
+                let hasChanged = false;
+                const nextDirs: Record<string, 'up' | 'down' | null> = {};
+
+                const updated = prevMarkets.map(m => {
+                  if (m.symbol === symbol) {
+                    if (m.price !== newPrice) {
+                      hasChanged = true;
+                      nextDirs[m.id] = newPrice > m.price ? 'up' : 'down';
+                    }
+
+                    return {
+                      ...m,
+                      price: newPrice,
+                      change24h: change24h !== 0 ? parseFloat(change24h.toFixed(2)) : m.change24h,
+                      volume24h: volume24h > 0 ? volume24h : m.volume24h,
+                    };
+                  }
+                  return m;
+                });
+
+                if (hasChanged) {
+                  setPriceDirections(prev => ({ ...prev, ...nextDirs }));
+                  setTimeout(() => {
+                    if (isMounted) setPriceDirections({});
+                  }, 400);
+                }
+
+                return updated;
+              });
+            }
+          } catch (err) {
+            console.error("Error parsing Coinbase WebSocket message:", err);
+          }
+        };
+
+        ws.onerror = (err) => {
+          console.warn("Coinbase WebSocket error:", err);
+          isWsConnected = false;
+          startFallbackPolling();
+        };
+
+        ws.onclose = () => {
+          if (!isMounted) return;
+          console.warn("Coinbase WebSocket closed.");
+          isWsConnected = false;
+          startFallbackPolling();
+        };
+      } catch (err) {
+        console.error("Failed to initialize Coinbase WebSocket:", err);
+        startFallbackPolling();
+      }
+    };
+
+    connectCoinbaseWS();
 
     return () => {
       isMounted = false;
+      isWsConnected = false;
       if (ws) {
-        ws.onclose = null; // Prevent reconnect on unmount
+        ws.onclose = null;
+        ws.onerror = null;
         ws.close();
       }
-      if (reconnectTimer) clearTimeout(reconnectTimer);
+      stopFallbackPolling();
     };
   }, []);
 
@@ -146,7 +230,7 @@ export default function MarketsPage() {
     );
   };
 
-  // Dynamic formatting for token prices (up to 6 decimals for low-cap coins)
+  // Dynamic formatting for token prices
   const formatMarketPrice = (price: number) => {
     if (price === 0) return "$0.00";
     let decimals = 2;
@@ -161,7 +245,7 @@ export default function MarketsPage() {
     }).format(price);
   };
 
-  // Compact number formatting for large stats (e.g. $845.2M instead of truncated digits)
+  // Compact number formatting for volume and OI ($845.2M)
   const formatCompactNumber = (num: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -176,13 +260,11 @@ export default function MarketsPage() {
   const filteredMarkets = useMemo(() => {
     let result = [...marketsData];
 
-    // Search filter
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       result = result.filter(m => m.symbol.toLowerCase().includes(q) || m.name.toLowerCase().includes(q));
     }
 
-    // Category filter/sort
     switch (activeCategory) {
       case 'trending':
         result = result.filter(m => m.trending);
@@ -313,9 +395,9 @@ export default function MarketsPage() {
                       <td className="py-4 px-4 text-right font-mono font-medium overflow-hidden text-ellipsis">
                         <span className={`inline-block transition-all duration-300 ${
                           priceDirections[market.id] === 'up' 
-                            ? 'text-green-400 font-bold scale-105' 
+                            ? 'text-green-400 font-bold scale-105 animate-pulse' 
                             : priceDirections[market.id] === 'down' 
-                              ? 'text-red-400 font-bold scale-105' 
+                              ? 'text-red-400 font-bold scale-105 animate-pulse' 
                               : 'text-white'
                         }`}>
                           {formatMarketPrice(market.price)}
