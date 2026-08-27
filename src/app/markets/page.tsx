@@ -18,104 +18,131 @@ type Market = {
   trending?: boolean;
 };
 
+const DEFAULT_MARKETS: Market[] = [
+  { id: 'nado', symbol: 'NADO', name: 'Nado Token', price: 2.45, change24h: 12.5, volume24h: 15400000, fundingRate: 0.01, oi: 5200000 },
+  { id: 'btc', symbol: 'BTC', name: 'Bitcoin', price: 80450.00, change24h: 2.4, volume24h: 845000000, fundingRate: 0.005, oi: 154000000 },
+  { id: 'eth', symbol: 'ETH', name: 'Ethereum', price: 2620.50, change24h: -1.2, volume24h: 420000000, fundingRate: -0.002, oi: 89000000 },
+  { id: 'sol', symbol: 'SOL', name: 'Solana', price: 148.90, change24h: 8.5, volume24h: 156000000, fundingRate: 0.015, oi: 45000000 },
+  { id: 'avax', symbol: 'AVAX', name: 'Avalanche', price: 35.40, change24h: 1.5, volume24h: 45000000, fundingRate: 0.008, oi: 12000000 },
+  { id: 'link', symbol: 'LINK', name: 'Chainlink', price: 18.20, change24h: -4.2, volume24h: 32000000, fundingRate: -0.01, oi: 8500000 },
+  { id: 'arb', symbol: 'ARB', name: 'Arbitrum', price: 1.15, change24h: 4.2, volume24h: 28000000, fundingRate: 0.005, oi: 6200000 },
+  { id: 'doge', symbol: 'DOGE', name: 'Dogecoin', price: 0.14, change24h: -8.5, volume24h: 85000000, fundingRate: -0.02, oi: 18000000 },
+];
+
 export default function MarketsPage() {
-  const { t, language, setLanguage, currency, setCurrency, formatCurrency } = useLocalization();
-  const [marketsData, setMarketsData] = useState<Market[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const { t, formatCurrency } = useLocalization();
+  const [marketsData, setMarketsData] = useState<Market[]>(DEFAULT_MARKETS);
+  const [isLoading, setIsLoading] = useState(false);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<'all' | 'trending' | 'gainers' | 'losers' | 'watchlist'>('all');
   const [favorites, setFavorites] = useState<string[]>(['BTC', 'NADO']);
 
-  // Price tracking for live tick updates & visual flash indications
-  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+  // Price direction tracking for blinking flash indicator
   const [priceDirections, setPriceDirections] = useState<Record<string, 'up' | 'down' | null>>({});
 
-  // Sync REST market prices every 1 second (no-store)
+  // 1. Direct Binance WebSocket Stream + Exponential Backoff Reconnection
   useEffect(() => {
-    const fetchMarkets = () => {
-      fetch('/api/markets', { cache: 'no-store' })
-        .then(res => res.json())
-        .then(data => {
-          const fetchedMarkets: Market[] = data.data || [];
-          
-          setMarketsData(current => {
-            const nextDirs: Record<string, 'up' | 'down' | null> = {};
-            fetchedMarkets.forEach(m => {
-              const currentItem = current.find(c => c.id === m.id);
-              if (currentItem && m.price !== currentItem.price) {
-                nextDirs[m.id] = m.price > currentItem.price ? 'up' : 'down';
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: NodeJS.Timeout | null = null;
+    let reconnectDelay = 1000; // Start backoff at 1s
+    let isComponentMounted = true;
+
+    const connectWebSocket = () => {
+      // Connect to Binance Public MiniTicker WS Stream (Streams 24h tickers for all assets in real-time)
+      ws = new WebSocket('wss://stream.binance.com:9443/ws/!miniTicker@arr');
+
+      ws.onopen = () => {
+        reconnectDelay = 1000; // Reset backoff delay on successful connection
+      };
+
+      ws.onmessage = (event) => {
+        if (!isComponentMounted) return;
+        try {
+          const tickers = JSON.parse(event.data);
+          if (Array.isArray(tickers)) {
+            const dirs: Record<string, 'up' | 'down' | null> = {};
+            let hasUpdates = false;
+
+            setMarketsData(prevMarkets => {
+              const updated = prevMarkets.map(market => {
+                const binanceSymbol = `${market.symbol}USDT`;
+                const matchedTicker = tickers.find((t: any) => t.s === binanceSymbol);
+
+                if (matchedTicker) {
+                  const newPrice = parseFloat(matchedTicker.c);
+                  const openPrice = parseFloat(matchedTicker.o);
+                  const change24h = openPrice > 0 ? ((newPrice - openPrice) / openPrice) * 100 : market.change24h;
+                  const volume24h = parseFloat(matchedTicker.q);
+
+                  if (newPrice !== market.price) {
+                    dirs[market.id] = newPrice > market.price ? 'up' : 'down';
+                    hasUpdates = true;
+                  }
+
+                  return {
+                    ...market,
+                    price: newPrice,
+                    change24h: parseFloat(change24h.toFixed(2)),
+                    volume24h: volume24h > 0 ? volume24h : market.volume24h,
+                  };
+                }
+                return market;
+              });
+
+              if (hasUpdates) {
+                setPriceDirections(dirs);
+                setTimeout(() => {
+                  if (isComponentMounted) setPriceDirections({});
+                }, 400);
               }
+
+              return updated;
             });
+          }
+        } catch (err) {
+          console.error("Error parsing WebSocket ticker payload:", err);
+        }
+      };
 
-            if (Object.keys(nextDirs).length > 0) {
-              setPriceDirections(dir => ({ ...dir, ...nextDirs }));
-              setTimeout(() => {
-                setPriceDirections({});
-              }, 400);
-            }
-            return fetchedMarkets;
-          });
+      ws.onerror = (error) => {
+        console.warn("Binance WebSocket stream error:", error);
+      };
 
-          // Populate initial livePrices
-          setLivePrices(prev => {
-            const next = { ...prev };
-            fetchedMarkets.forEach(m => {
-              if (next[m.id] === undefined) {
-                next[m.id] = m.price;
-              }
-            });
-            return next;
-          });
-
-          setIsLoading(false);
-        })
-        .catch(err => {
-          console.error("Failed to fetch live markets data:", err);
-          setIsLoading(false);
-        });
+      ws.onclose = () => {
+        if (!isComponentMounted) return;
+        console.warn(`WebSocket connection closed. Reconnecting in ${reconnectDelay}ms...`);
+        reconnectTimeout = setTimeout(() => {
+          reconnectDelay = Math.min(reconnectDelay * 2, 16000); // Exponential backoff up to 16s
+          connectWebSocket();
+        }, reconnectDelay);
+      };
     };
 
-    fetchMarkets();
-    const interval = setInterval(fetchMarkets, 1000);
+    connectWebSocket();
 
-    return () => clearInterval(interval);
+    // 2. Safe REST Polling Fallback (10s interval to prevent HTTP 429)
+    const fetchMarketsREST = () => {
+      fetch('/api/markets')
+        .then(res => res.json())
+        .then(data => {
+          if (data && Array.isArray(data.data) && isComponentMounted) {
+            setMarketsData(data.data);
+          }
+        })
+        .catch(err => console.error("REST fallback query error:", err));
+    };
+
+    fetchMarketsREST();
+    const fallbackInterval = setInterval(fetchMarketsREST, 10000);
+
+    return () => {
+      isComponentMounted = false;
+      if (ws) ws.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (fallbackInterval) clearInterval(fallbackInterval);
+    };
   }, []);
-
-  // Micro-tick simulation loop (runs every 300ms so every asset continuously updates & pulses visually)
-  useEffect(() => {
-    if (marketsData.length === 0) return;
-
-    const tickInterval = setInterval(() => {
-      setLivePrices(prev => {
-        const next = { ...prev };
-        const nextDirs: Record<string, 'up' | 'down' | null> = {};
-
-        marketsData.forEach(m => {
-          const basePrice = m.price;
-          const currentPrice = next[m.id] || basePrice;
-          if (currentPrice === 0) return;
-
-          // Tiny fluctuation around the real price
-          const volatility = m.symbol === 'NADO' ? 0.0001 : 0.00008; 
-          const change = basePrice * volatility * (Math.random() - 0.5);
-          const newPrice = currentPrice + change;
-
-          next[m.id] = newPrice;
-          nextDirs[m.id] = change > 0 ? 'up' : 'down';
-        });
-
-        setPriceDirections(nextDirs);
-        setTimeout(() => {
-          setPriceDirections({});
-        }, 200);
-
-        return next;
-      });
-    }, 300);
-
-    return () => clearInterval(tickInterval);
-  }, [marketsData]);
 
   const toggleFavorite = (symbol: string) => {
     setFavorites(prev => 
@@ -301,7 +328,7 @@ export default function MarketsPage() {
                                 ? 'text-red-400 font-bold scale-105' 
                                 : 'text-white'
                           }`}>
-                            {formatMarketPrice(livePrices[market.id] || market.price)}
+                            {formatMarketPrice(market.price)}
                           </span>
                         </td>
                         
