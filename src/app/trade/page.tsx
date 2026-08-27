@@ -49,7 +49,7 @@ export default function ProTradePage() {
 
   // Market State
   const [activeMarket, setActiveMarket] = useState<MarketConfig>(MARKETS[0]);
-  const [price, setPrice] = useState<number>(145.5); // Fallback solver
+  const [price, setPrice] = useState<number>(145.5); // Fallback price
   const [chartResolution, setChartResolution] = useState<'1m' | '5m' | '15m' | '1H' | '4H' | '1D'>('1H');
   const [tickerStats, setTickerStats] = useState({
     change24h: '+0.00',
@@ -101,20 +101,33 @@ export default function ProTradePage() {
     { price: price * 1.0000, size: 4500, time: '14:23:30', type: 'buy' },
   ];
 
-  // Helper: Fetch Pyth Price via REST
-  const fetchPythPrice = async (pythId: string) => {
+  // Helper: Fetch Pyth Price via REST, fallback to Binance
+  const fetchPythPrice = async (pythId: string, binanceSymbol: string) => {
     try {
       const response = await fetch(`https://hermes.pyth.network/v2/updates/price/latest?ids[]=${pythId}`);
-      const data = await response.json();
-      if (data && data.parsed && data.parsed.length > 0) {
-        const parsed = data.parsed[0];
-        const rawPrice = BigInt(parsed.price.price);
-        const expo = parsed.price.expo;
-        const finalPrice = Number(rawPrice) * Math.pow(10, expo);
-        return finalPrice;
+      if (response.status === 200) {
+        const data = await response.json();
+        if (data && data.parsed && data.parsed.length > 0) {
+          const parsed = data.parsed[0];
+          const rawPrice = BigInt(parsed.price.price);
+          const expo = parsed.price.expo;
+          const finalPrice = Number(rawPrice) * Math.pow(10, expo);
+          return finalPrice;
+        }
       }
     } catch (e) {
       console.error("Failed to fetch latest price from Pyth Hermes API", e);
+    }
+
+    // Fallback: Fetch price directly from Binance if Pyth fails (e.g. 401 Unauthorized)
+    try {
+      const binanceResponse = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${binanceSymbol}`);
+      if (binanceResponse.ok) {
+        const ticker = await binanceResponse.json();
+        return parseFloat(ticker.price);
+      }
+    } catch (binanceErr) {
+      console.error("Binance price fallback query failed", binanceErr);
     }
     return null;
   };
@@ -177,10 +190,21 @@ export default function ProTradePage() {
     return () => clearInterval(interval);
   }, [activeMarket]);
 
-  // Sync Pyth Price via REST & WebSocket
+  // Sync Price via REST & WebSocket (with Binance backup polling)
   useEffect(() => {
     let ws: WebSocket | null = null;
     let isMounted = true;
+    let pollInterval: NodeJS.Timeout | null = null;
+
+    const startBackupPolling = () => {
+      if (pollInterval) return;
+      pollInterval = setInterval(async () => {
+        const fallbackPrice = await fetchPythPrice(activeMarket.pythId, activeMarket.binanceSymbol);
+        if (fallbackPrice && isMounted) {
+          setPrice(fallbackPrice);
+        }
+      }, 3000);
+    };
 
     const initWebSocket = () => {
       ws = new WebSocket('wss://hermes.pyth.network/ws');
@@ -204,6 +228,12 @@ export default function ProTradePage() {
             const expo = priceData.expo;
             const finalPrice = Number(rawPrice) * Math.pow(10, expo);
             setPrice(finalPrice);
+            
+            // Cancel backup polling if WebSocket is successfully feeding prices
+            if (pollInterval) {
+              clearInterval(pollInterval);
+              pollInterval = null;
+            }
           }
         } catch (err) {
           console.error("WebSocket message parse error", err);
@@ -211,28 +241,32 @@ export default function ProTradePage() {
       };
 
       ws.onerror = (err) => {
-        console.error("WebSocket error", err);
+        console.error("WebSocket connection failed. Falling back to REST polling.", err);
+        startBackupPolling();
       };
 
       ws.onclose = () => {
         if (isMounted) {
-          setTimeout(initWebSocket, 3000);
+          startBackupPolling();
+          setTimeout(initWebSocket, 5000);
         }
       };
     };
 
-    // Load initial REST price
-    fetchPythPrice(activeMarket.pythId).then((initialPrice) => {
+    // Load initial price
+    fetchPythPrice(activeMarket.pythId, activeMarket.binanceSymbol).then((initialPrice) => {
       if (initialPrice && isMounted) {
         setPrice(initialPrice);
       }
     });
 
     initWebSocket();
+    startBackupPolling(); // Start backup REST polling immediately (handles 401 Pyth block gracefully)
 
     return () => {
       isMounted = false;
       if (ws) ws.close();
+      if (pollInterval) clearInterval(pollInterval);
     };
   }, [activeMarket]);
 
