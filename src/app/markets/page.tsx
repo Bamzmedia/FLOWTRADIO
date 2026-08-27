@@ -18,7 +18,7 @@ type Market = {
   trending?: boolean;
 };
 
-const DEFAULT_MARKETS: Market[] = [
+const INITIAL_MARKETS: Market[] = [
   { id: 'nado', symbol: 'NADO', name: 'Nado Token', price: 2.45, change24h: 12.5, volume24h: 15400000, fundingRate: 0.01, oi: 5200000 },
   { id: 'btc', symbol: 'BTC', name: 'Bitcoin', price: 80450.00, change24h: 2.4, volume24h: 845000000, fundingRate: 0.005, oi: 154000000 },
   { id: 'eth', symbol: 'ETH', name: 'Ethereum', price: 2620.50, change24h: -1.2, volume24h: 420000000, fundingRate: -0.002, oi: 89000000 },
@@ -31,8 +31,7 @@ const DEFAULT_MARKETS: Market[] = [
 
 export default function MarketsPage() {
   const { t, formatCurrency } = useLocalization();
-  const [marketsData, setMarketsData] = useState<Market[]>(DEFAULT_MARKETS);
-  const [isLoading, setIsLoading] = useState(false);
+  const [marketsData, setMarketsData] = useState<Market[]>(INITIAL_MARKETS);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<'all' | 'trending' | 'gainers' | 'losers' | 'watchlist'>('all');
@@ -41,59 +40,70 @@ export default function MarketsPage() {
   // Price direction tracking for blinking flash indicator
   const [priceDirections, setPriceDirections] = useState<Record<string, 'up' | 'down' | null>>({});
 
-  // 1. Direct Binance WebSocket Stream + Exponential Backoff Reconnection
+  // 100% Dedicated Live Binance WebSocket Stream Hook
   useEffect(() => {
     let ws: WebSocket | null = null;
-    let reconnectTimeout: NodeJS.Timeout | null = null;
-    let reconnectDelay = 1000; // Start backoff at 1s
-    let isComponentMounted = true;
+    let reconnectTimer: NodeJS.Timeout | null = null;
+    let isMounted = true;
 
-    const connectWebSocket = () => {
-      // Connect to Binance Public MiniTicker WS Stream (Streams 24h tickers for all assets in real-time)
-      ws = new WebSocket('wss://stream.binance.com:9443/ws/!miniTicker@arr');
+    const streams = [
+      'btcusdt@ticker',
+      'ethusdt@ticker',
+      'solusdt@ticker',
+      'avaxusdt@ticker',
+      'linkusdt@ticker',
+      'arbusdt@ticker',
+      'dogeusdt@ticker'
+    ].join('/');
+
+    const wsUrl = `wss://stream.binance.com:9443/stream?streams=${streams}`;
+
+    const connect = () => {
+      if (!isMounted) return;
+
+      ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
-        reconnectDelay = 1000; // Reset backoff delay on successful connection
+        console.log("Connected to Binance Live WebSocket Market Stream.");
       };
 
       ws.onmessage = (event) => {
-        if (!isComponentMounted) return;
+        if (!isMounted) return;
         try {
-          const tickers = JSON.parse(event.data);
-          if (Array.isArray(tickers)) {
-            const dirs: Record<string, 'up' | 'down' | null> = {};
-            let hasUpdates = false;
+          const payload = JSON.parse(event.data);
+          const data = payload.data || payload;
+
+          if (data && data.s && data.c) {
+            const symbol = data.s.replace('USDT', '');
+            const newPrice = parseFloat(data.c);
+            const change24h = parseFloat(data.P);
+            const volume24h = parseFloat(data.q);
 
             setMarketsData(prevMarkets => {
-              const updated = prevMarkets.map(market => {
-                const binanceSymbol = `${market.symbol}USDT`;
-                const matchedTicker = tickers.find((t: any) => t.s === binanceSymbol);
+              let hasChanged = false;
+              const nextDirs: Record<string, 'up' | 'down' | null> = {};
 
-                if (matchedTicker) {
-                  const newPrice = parseFloat(matchedTicker.c);
-                  const openPrice = parseFloat(matchedTicker.o);
-                  const change24h = openPrice > 0 ? ((newPrice - openPrice) / openPrice) * 100 : market.change24h;
-                  const volume24h = parseFloat(matchedTicker.q);
-
-                  if (newPrice !== market.price) {
-                    dirs[market.id] = newPrice > market.price ? 'up' : 'down';
-                    hasUpdates = true;
+              const updated = prevMarkets.map(m => {
+                if (m.symbol === symbol) {
+                  if (m.price !== newPrice) {
+                    hasChanged = true;
+                    nextDirs[m.id] = newPrice > m.price ? 'up' : 'down';
                   }
 
                   return {
-                    ...market,
+                    ...m,
                     price: newPrice,
-                    change24h: parseFloat(change24h.toFixed(2)),
-                    volume24h: volume24h > 0 ? volume24h : market.volume24h,
+                    change24h: isNaN(change24h) ? m.change24h : change24h,
+                    volume24h: isNaN(volume24h) || volume24h === 0 ? m.volume24h : volume24h,
                   };
                 }
-                return market;
+                return m;
               });
 
-              if (hasUpdates) {
-                setPriceDirections(dirs);
+              if (hasChanged) {
+                setPriceDirections(prev => ({ ...prev, ...nextDirs }));
                 setTimeout(() => {
-                  if (isComponentMounted) setPriceDirections({});
+                  if (isMounted) setPriceDirections({});
                 }, 400);
               }
 
@@ -101,46 +111,32 @@ export default function MarketsPage() {
             });
           }
         } catch (err) {
-          console.error("Error parsing WebSocket ticker payload:", err);
+          console.error("Error parsing WebSocket event:", err);
         }
       };
 
-      ws.onerror = (error) => {
-        console.warn("Binance WebSocket stream error:", error);
+      ws.onerror = (err) => {
+        console.warn("WebSocket connection error. Retrying in 3s...", err);
       };
 
       ws.onclose = () => {
-        if (!isComponentMounted) return;
-        console.warn(`WebSocket connection closed. Reconnecting in ${reconnectDelay}ms...`);
-        reconnectTimeout = setTimeout(() => {
-          reconnectDelay = Math.min(reconnectDelay * 2, 16000); // Exponential backoff up to 16s
-          connectWebSocket();
-        }, reconnectDelay);
+        if (!isMounted) return;
+        console.warn("WebSocket closed. Triggering reconnect in 3 seconds...");
+        reconnectTimer = setTimeout(() => {
+          connect();
+        }, 3000); // Fixed 3-second retry interval
       };
     };
 
-    connectWebSocket();
-
-    // 2. Safe REST Polling Fallback (10s interval to prevent HTTP 429)
-    const fetchMarketsREST = () => {
-      fetch('/api/markets')
-        .then(res => res.json())
-        .then(data => {
-          if (data && Array.isArray(data.data) && isComponentMounted) {
-            setMarketsData(data.data);
-          }
-        })
-        .catch(err => console.error("REST fallback query error:", err));
-    };
-
-    fetchMarketsREST();
-    const fallbackInterval = setInterval(fetchMarketsREST, 10000);
+    connect();
 
     return () => {
-      isComponentMounted = false;
-      if (ws) ws.close();
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      if (fallbackInterval) clearInterval(fallbackInterval);
+      isMounted = false;
+      if (ws) {
+        ws.onclose = null; // Prevent reconnect on unmount
+        ws.close();
+      }
+      if (reconnectTimer) clearTimeout(reconnectTimer);
     };
   }, []);
 
@@ -258,116 +254,109 @@ export default function MarketsPage() {
         </div>
 
         {/* Markets Data Table */}
-        {isLoading ? (
-          <div className="flex flex-col items-center justify-center py-20 text-gray-400">
-            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mb-4"></div>
-            Loading markets data...
-          </div>
-        ) : (
-          <div className="glass-panel rounded-3xl overflow-hidden border-t-primary/20 border-t shadow-2xl">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[800px] table-fixed">
-                <thead>
-                  <tr className="bg-black/20 text-gray-400 text-xs uppercase tracking-wider border-b border-white/5">
-                    <th className="py-4 px-4 w-12 text-center font-semibold"></th>
-                    <th className="py-4 px-4 w-[22%] text-left font-semibold">Market</th>
-                    <th className="py-4 px-4 w-[16%] text-right font-semibold">Price</th>
-                    <th className="py-4 px-4 w-[14%] text-right font-semibold">24H Change</th>
-                    <th className="py-4 px-4 w-[16%] text-right font-semibold">24H Volume</th>
-                    <th className="py-4 px-4 w-[12%] text-right font-semibold">Funding Rate</th>
-                    <th className="py-4 px-4 w-[12%] text-right font-semibold">Open Interest</th>
-                    <th className="py-4 px-4 w-[8%] text-right font-semibold"></th>
+        <div className="glass-panel rounded-3xl overflow-hidden border-t-primary/20 border-t shadow-2xl">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[800px] table-fixed">
+              <thead>
+                <tr className="bg-black/20 text-gray-400 text-xs uppercase tracking-wider border-b border-white/5">
+                  <th className="py-4 px-4 w-12 text-center font-semibold"></th>
+                  <th className="py-4 px-4 w-[22%] text-left font-semibold">Market</th>
+                  <th className="py-4 px-4 w-[16%] text-right font-semibold">Price</th>
+                  <th className="py-4 px-4 w-[14%] text-right font-semibold">24H Change</th>
+                  <th className="py-4 px-4 w-[16%] text-right font-semibold">24H Volume</th>
+                  <th className="py-4 px-4 w-[12%] text-right font-semibold">Funding Rate</th>
+                  <th className="py-4 px-4 w-[12%] text-right font-semibold">Open Interest</th>
+                  <th className="py-4 px-4 w-[8%] text-right font-semibold"></th>
+                </tr>
+              </thead>
+              <tbody className="text-sm divide-y divide-white/5">
+                {filteredMarkets.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-12 text-center text-gray-500">
+                      No markets found matching your criteria.
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="text-sm divide-y divide-white/5">
-                  {filteredMarkets.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="py-12 text-center text-gray-500">
-                        No markets found matching your criteria.
+                ) : (
+                  filteredMarkets.map((market) => (
+                    <tr key={market.id} className="hover:bg-white/5 transition-colors group">
+                      <td className="py-4 px-4 text-center">
+                        <button 
+                          onClick={() => toggleFavorite(market.symbol)}
+                          className="hover:scale-110 transition-transform"
+                        >
+                          <Star 
+                            size={18} 
+                            className={favorites.includes(market.symbol) ? 'fill-yellow-500 text-yellow-500' : 'text-gray-600 hover:text-gray-400'} 
+                          />
+                        </button>
+                      </td>
+                      
+                      <td className="py-4 px-4 text-left overflow-hidden text-ellipsis">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center font-bold text-xs shadow-inner flex-shrink-0">
+                            {market.symbol[0]}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-bold text-white group-hover:text-primary transition-colors cursor-pointer flex items-center gap-1.5">
+                              <span className="truncate">{market.symbol}</span>
+                              {market.symbol === 'NADO' && (
+                                <span className="text-[10px] bg-primary/20 text-primary border border-primary/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider flex-shrink-0">
+                                  Testnet
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-gray-500 text-xs truncate">{market.name}</div>
+                          </div>
+                        </div>
+                      </td>
+                      
+                      <td className="py-4 px-4 text-right font-mono font-medium overflow-hidden text-ellipsis">
+                        <span className={`inline-block transition-all duration-300 ${
+                          priceDirections[market.id] === 'up' 
+                            ? 'text-green-400 font-bold scale-105' 
+                            : priceDirections[market.id] === 'down' 
+                              ? 'text-red-400 font-bold scale-105' 
+                              : 'text-white'
+                        }`}>
+                          {formatMarketPrice(market.price)}
+                        </span>
+                      </td>
+                      
+                      <td className="py-4 px-4 text-right font-mono font-medium overflow-hidden text-ellipsis">
+                        <div className={`flex items-center justify-end gap-1 ${market.change24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {market.change24h >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+                          {Math.abs(market.change24h).toFixed(2)}%
+                        </div>
+                      </td>
+                      
+                      <td className="py-4 px-4 text-right text-gray-300 font-mono overflow-hidden text-ellipsis">
+                        {formatCompactNumber(market.volume24h)}
+                      </td>
+                      
+                      <td className="py-4 px-4 text-right font-mono overflow-hidden text-ellipsis">
+                        <span className={market.fundingRate > 0 ? 'text-yellow-400' : 'text-primary'}>
+                          {market.fundingRate > 0 ? '+' : ''}{market.fundingRate.toFixed(4)}%
+                        </span>
+                      </td>
+                      
+                      <td className="py-4 px-4 text-right text-gray-400 font-mono overflow-hidden text-ellipsis">
+                        {formatCompactNumber(market.oi)}
+                      </td>
+
+                      <td className="py-4 px-4 text-right">
+                        <Link href="/">
+                          <button className="glass-panel bg-white/5 hover:bg-primary hover:text-background text-primary px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1 ml-auto">
+                            Trade <ArrowRight size={12} />
+                          </button>
+                        </Link>
                       </td>
                     </tr>
-                  ) : (
-                    filteredMarkets.map((market) => (
-                      <tr key={market.id} className="hover:bg-white/5 transition-colors group">
-                        <td className="py-4 px-4 text-center">
-                          <button 
-                            onClick={() => toggleFavorite(market.symbol)}
-                            className="hover:scale-110 transition-transform"
-                          >
-                            <Star 
-                              size={18} 
-                              className={favorites.includes(market.symbol) ? 'fill-yellow-500 text-yellow-500' : 'text-gray-600 hover:text-gray-400'} 
-                            />
-                          </button>
-                        </td>
-                        
-                        <td className="py-4 px-4 text-left overflow-hidden text-ellipsis">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center font-bold text-xs shadow-inner flex-shrink-0">
-                              {market.symbol[0]}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="font-bold text-white group-hover:text-primary transition-colors cursor-pointer flex items-center gap-1.5">
-                                <span className="truncate">{market.symbol}</span>
-                                {market.symbol === 'NADO' && (
-                                  <span className="text-[10px] bg-primary/20 text-primary border border-primary/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider flex-shrink-0">
-                                    Testnet
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-gray-500 text-xs truncate">{market.name}</div>
-                            </div>
-                          </div>
-                        </td>
-                        
-                        <td className="py-4 px-4 text-right font-mono font-medium overflow-hidden text-ellipsis">
-                          <span className={`inline-block transition-all duration-300 ${
-                            priceDirections[market.id] === 'up' 
-                              ? 'text-green-400 font-bold scale-105' 
-                              : priceDirections[market.id] === 'down' 
-                                ? 'text-red-400 font-bold scale-105' 
-                                : 'text-white'
-                          }`}>
-                            {formatMarketPrice(market.price)}
-                          </span>
-                        </td>
-                        
-                        <td className="py-4 px-4 text-right font-mono font-medium overflow-hidden text-ellipsis">
-                          <div className={`flex items-center justify-end gap-1 ${market.change24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                            {market.change24h >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-                            {Math.abs(market.change24h).toFixed(2)}%
-                          </div>
-                        </td>
-                        
-                        <td className="py-4 px-4 text-right text-gray-300 font-mono overflow-hidden text-ellipsis">
-                          {formatCompactNumber(market.volume24h)}
-                        </td>
-                        
-                        <td className="py-4 px-4 text-right font-mono overflow-hidden text-ellipsis">
-                          <span className={market.fundingRate > 0 ? 'text-yellow-400' : 'text-primary'}>
-                            {market.fundingRate > 0 ? '+' : ''}{market.fundingRate.toFixed(4)}%
-                          </span>
-                        </td>
-                        
-                        <td className="py-4 px-4 text-right text-gray-400 font-mono overflow-hidden text-ellipsis">
-                          {formatCompactNumber(market.oi)}
-                        </td>
-
-                        <td className="py-4 px-4 text-right">
-                          <Link href="/">
-                            <button className="glass-panel bg-white/5 hover:bg-primary hover:text-background text-primary px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1 ml-auto">
-                              Trade <ArrowRight size={12} />
-                            </button>
-                          </Link>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
-        )}
+        </div>
 
       </main>
     </div>
