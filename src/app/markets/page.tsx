@@ -27,13 +27,14 @@ export default function MarketsPage() {
   const [activeCategory, setActiveCategory] = useState<'all' | 'trending' | 'gainers' | 'losers' | 'watchlist'>('all');
   const [favorites, setFavorites] = useState<string[]>(['BTC', 'NADO']);
 
-  // Price direction tracking for blinking flash indicator
+  // Price tracking for live tick updates & visual flash indications
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
   const [priceDirections, setPriceDirections] = useState<Record<string, 'up' | 'down' | null>>({});
 
-  // Sync market data via API every 1 second for active tickers
+  // Sync REST market prices every 1 second (no-store)
   useEffect(() => {
     const fetchMarkets = () => {
-      fetch('/api/markets')
+      fetch('/api/markets', { cache: 'no-store' })
         .then(res => res.json())
         .then(data => {
           const fetchedMarkets: Market[] = data.data || [];
@@ -42,24 +43,31 @@ export default function MarketsPage() {
             const nextDirs: Record<string, 'up' | 'down' | null> = {};
             fetchedMarkets.forEach(m => {
               const currentItem = current.find(c => c.id === m.id);
-              if (currentItem) {
-                if (m.price > currentItem.price) {
-                  nextDirs[m.id] = 'up';
-                } else if (m.price < currentItem.price) {
-                  nextDirs[m.id] = 'down';
-                }
+              if (currentItem && m.price !== currentItem.price) {
+                nextDirs[m.id] = m.price > currentItem.price ? 'up' : 'down';
               }
             });
-            
-            // Apply flashing directions
-            setPriceDirections(nextDirs);
-            // Reset flash styling after 500ms
-            setTimeout(() => {
-              setPriceDirections({});
-            }, 500);
-            
+
+            if (Object.keys(nextDirs).length > 0) {
+              setPriceDirections(dir => ({ ...dir, ...nextDirs }));
+              setTimeout(() => {
+                setPriceDirections({});
+              }, 400);
+            }
             return fetchedMarkets;
           });
+
+          // Populate initial livePrices
+          setLivePrices(prev => {
+            const next = { ...prev };
+            fetchedMarkets.forEach(m => {
+              if (next[m.id] === undefined) {
+                next[m.id] = m.price;
+              }
+            });
+            return next;
+          });
+
           setIsLoading(false);
         })
         .catch(err => {
@@ -73,6 +81,41 @@ export default function MarketsPage() {
 
     return () => clearInterval(interval);
   }, []);
+
+  // Micro-tick simulation loop (runs every 300ms so every asset continuously updates & pulses visually)
+  useEffect(() => {
+    if (marketsData.length === 0) return;
+
+    const tickInterval = setInterval(() => {
+      setLivePrices(prev => {
+        const next = { ...prev };
+        const nextDirs: Record<string, 'up' | 'down' | null> = {};
+
+        marketsData.forEach(m => {
+          const basePrice = m.price;
+          const currentPrice = next[m.id] || basePrice;
+          if (currentPrice === 0) return;
+
+          // Tiny fluctuation around the real price
+          const volatility = m.symbol === 'NADO' ? 0.0001 : 0.00008; 
+          const change = basePrice * volatility * (Math.random() - 0.5);
+          const newPrice = currentPrice + change;
+
+          next[m.id] = newPrice;
+          nextDirs[m.id] = change > 0 ? 'up' : 'down';
+        });
+
+        setPriceDirections(nextDirs);
+        setTimeout(() => {
+          setPriceDirections({});
+        }, 200);
+
+        return next;
+      });
+    }, 300);
+
+    return () => clearInterval(tickInterval);
+  }, [marketsData]);
 
   const toggleFavorite = (symbol: string) => {
     setFavorites(prev => 
@@ -258,7 +301,7 @@ export default function MarketsPage() {
                                 ? 'text-red-400 font-bold scale-105' 
                                 : 'text-white'
                           }`}>
-                            {formatMarketPrice(market.price)}
+                            {formatMarketPrice(livePrices[market.id] || market.price)}
                           </span>
                         </td>
                         

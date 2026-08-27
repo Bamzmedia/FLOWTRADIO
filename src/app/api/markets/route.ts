@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 const MOCK_MARKETS = [
   { id: 'nado', symbol: 'NADO', name: 'Nado Token', price: 2.45, change24h: 12.5, volume24h: 15400000, fundingRate: 0.01, oi: 5200000 },
   { id: 'btc', symbol: 'BTC', name: 'Bitcoin', price: 80450.00, change24h: 2.4, volume24h: 845000000, fundingRate: 0.005, oi: 154000000 },
@@ -15,7 +18,7 @@ export async function GET() {
   try {
     const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "LINKUSDT", "ARBUSDT", "DOGEUSDT"];
     const response = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`, {
-      next: { revalidate: 10 } // Cache response for 10 seconds
+      cache: 'no-store'
     });
     
     if (response.ok) {
@@ -46,6 +49,10 @@ export async function GET() {
       return NextResponse.json({
         data: updatedMarkets,
         timestamp: new Date().toISOString()
+      }, {
+        headers: {
+          'Cache-Control': 'no-store, max-age=0, must-revalidate',
+        }
       });
     }
     
