@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { Search, Star, TrendingUp, TrendingDown, ArrowRight } from 'lucide-react';
 import { useLocalization } from '@/components/LocalizationContext';
@@ -28,14 +28,41 @@ export default function MarketsPage() {
   const [activeCategory, setActiveCategory] = useState<'all' | 'trending' | 'gainers' | 'losers' | 'watchlist'>('all');
   const [favorites, setFavorites] = useState<string[]>(['BTC', 'NADO']);
 
-  // Auto-refresh prices and stats every 5 seconds
+  // Price tracking for live tick updates & visual flash indications
+  const [livePrices, setLivePrices] = useState<Record<string, number>>({});
+  const [priceDirections, setPriceDirections] = useState<Record<string, 'up' | 'down' | null>>({});
+  const prevPricesRef = useRef<Record<string, number>>({});
+
+  // Sync REST market prices every 2 seconds
   useEffect(() => {
     const fetchMarkets = () => {
       fetch('/api/markets')
         .then(res => res.json())
         .then(data => {
-          setMarketsData(data.data || []);
+          const fetchedMarkets: Market[] = data.data || [];
+          setMarketsData(fetchedMarkets);
           setIsLoading(false);
+
+          // Update live prices and set directional flash flags if prices changed
+          setLivePrices(prev => {
+            const next = { ...prev };
+            fetchedMarkets.forEach(m => {
+              const oldPrice = prevPricesRef.current[m.id] || m.price;
+              if (m.price !== oldPrice) {
+                setPriceDirections(dir => ({
+                  ...dir,
+                  [m.id]: m.price > oldPrice ? 'up' : 'down'
+                }));
+                // Reset flash state after 400ms
+                setTimeout(() => {
+                  setPriceDirections(dir => ({ ...dir, [m.id]: null }));
+                }, 400);
+              }
+              next[m.id] = m.price;
+              prevPricesRef.current[m.id] = m.price;
+            });
+            return next;
+          });
         })
         .catch(err => {
           console.error("Failed to fetch live markets data:", err);
@@ -44,10 +71,45 @@ export default function MarketsPage() {
     };
 
     fetchMarkets();
-    const interval = setInterval(fetchMarkets, 5000);
+    const interval = setInterval(fetchMarkets, 2000);
 
     return () => clearInterval(interval);
   }, []);
+
+  // Simulate sub-second micro-tick fluctuations so prices "pulse" actively in real-time
+  useEffect(() => {
+    if (marketsData.length === 0) return;
+
+    const tickInterval = setInterval(() => {
+      setLivePrices(prev => {
+        const next = { ...prev };
+        marketsData.forEach(m => {
+          const currentPrice = next[m.id] || m.price;
+          if (currentPrice === 0) return;
+
+          // Introduce a micro-variation (0.005% fluctuation)
+          const volatility = m.symbol === 'NADO' ? 0.0001 : 0.00008; 
+          const change = currentPrice * volatility * (Math.random() - 0.5);
+          const newPrice = currentPrice + change;
+
+          next[m.id] = newPrice;
+          
+          // Briefly flash micro-movements
+          setPriceDirections(dir => ({
+            ...dir,
+            [m.id]: change > 0 ? 'up' : 'down'
+          }));
+          
+          setTimeout(() => {
+            setPriceDirections(dir => ({ ...dir, [m.id]: null }));
+          }, 200);
+        });
+        return next;
+      });
+    }, 350);
+
+    return () => clearInterval(tickInterval);
+  }, [marketsData]);
 
   const toggleFavorite = (symbol: string) => {
     setFavorites(prev => 
@@ -225,7 +287,15 @@ export default function MarketsPage() {
                         </td>
                         
                         <td className="py-4 px-6 text-right font-mono font-medium">
-                          {formatMarketPrice(market.price)}
+                          <span className={`inline-block transition-all duration-300 ${
+                            priceDirections[market.id] === 'up' 
+                              ? 'text-green-400 font-bold scale-105' 
+                              : priceDirections[market.id] === 'down' 
+                                ? 'text-red-400 font-bold scale-105' 
+                                : 'text-white'
+                          }`}>
+                            {formatMarketPrice(livePrices[market.id] || market.price)}
+                          </span>
                         </td>
                         
                         <td className="py-4 px-6 text-right font-mono font-medium">
