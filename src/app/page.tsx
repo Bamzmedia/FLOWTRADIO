@@ -8,6 +8,26 @@ import { useLocalization } from '@/components/LocalizationContext';
 
 export default function LandingPage() {
   const { t } = useLocalization();
+  const [stats, setStats] = React.useState({ volume: 0, users: 0, latency: 0 });
+
+  React.useEffect(() => {
+    // Attempt to fetch real global protocol stats
+    fetch('https://api.nado.xyz/v1/stats')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.volume) {
+          setStats({
+            volume: data.volume,
+            users: data.activeUsers,
+            latency: data.avgLatencyMs
+          });
+        }
+      })
+      .catch(() => {
+        // If API isn't live yet, default to zero (no mock data)
+        setStats({ volume: 0, users: 0, latency: 0 });
+      });
+  }, []);
 
   return (
     <div className="min-h-screen bg-background text-foreground font-sans flex flex-col relative overflow-hidden">
@@ -65,18 +85,18 @@ export default function LandingPage() {
             
             <div className="grid grid-cols-2 md:grid-cols-4 gap-8 relative z-10 divide-x divide-white/10">
               <div className="flex flex-col items-center justify-center text-center">
-                <div className="text-4xl font-black text-white mb-2 tracking-tight">$2.4B+</div>
+                <div className="text-4xl font-black text-white mb-2 tracking-tight">${stats.volume > 0 ? (stats.volume / 1e9).toFixed(1) + 'B+' : '0'}</div>
                 <div className="text-sm font-semibold text-gray-400 tracking-widest uppercase">Trading Volume</div>
               </div>
               
               <div className="flex flex-col items-center justify-center text-center">
-                <div className="text-4xl font-black text-white mb-2 tracking-tight">142k</div>
+                <div className="text-4xl font-black text-white mb-2 tracking-tight">{stats.users > 0 ? (stats.users / 1000).toFixed(0) + 'k' : '0'}</div>
                 <div className="text-sm font-semibold text-gray-400 tracking-widest uppercase">Active Traders</div>
               </div>
               
               <div className="flex flex-col items-center justify-center text-center">
                 <div className="text-4xl font-black text-white mb-2 tracking-tight flex items-baseline gap-1">
-                  50<span className="text-xl">ms</span>
+                  {stats.latency > 0 ? stats.latency : '-'}<span className="text-xl">{stats.latency > 0 ? 'ms' : ''}</span>
                 </div>
                 <div className="text-sm font-semibold text-gray-400 tracking-widest uppercase">Avg Execution Time</div>
               </div>
