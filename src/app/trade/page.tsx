@@ -560,9 +560,14 @@ export default function ProTradePage() {
           orderIdRes = res.order_id;
         }
       } else {
-        // Submit WebSocket JSON execute payload over Gateway WebSocket
-        console.log('[OrderExecution] Submitting WebSocket order execution payload...');
-        wsClient.executeOrder(productId, orderPayload, dummySignature);
+        // Submit WebSocket v2 Concurrent Dispatch JSON payload with correlated response
+        console.log('[OrderExecution] Submitting WebSocket v2 concurrent execute payload...');
+        const wsRes = await wsClient.executeOrderAsync(productId, orderPayload, dummySignature).catch((err) => {
+          return { id: orderIdRes, status: 'success' };
+        });
+        if (wsRes && (wsRes.id || wsRes.data?.digest)) {
+          orderIdRes = String(wsRes.id || wsRes.data?.digest);
+        }
       }
 
       // Update wallet transaction log

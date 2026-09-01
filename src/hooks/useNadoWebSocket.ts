@@ -15,6 +15,13 @@ class NadoWebSocketClient {
   private activeSubscriptions = new Map<string, WSStreamFilter>();
   private authPayload: Omit<WSAuthRequest, 'method'> | null = null;
   
+  // v2 Concurrent Dispatch Pending Requests Correlation Map
+  private pendingRequests = new Map<
+    number | string,
+    { resolve: (val: any) => void; reject: (err: any) => void; timestamp: number; requestType?: string }
+  >();
+  private nextRequestId = 1000;
+
   // Listeners
   private messageListeners = new Set<(data: any) => void>();
   private statusListeners = new Set<(status: ConnectionStatus) => void>();
@@ -50,16 +57,16 @@ class NadoWebSocketClient {
     }
 
     this.isExplicitlyClosed = false;
-    const { ws: wsUrl } = getNadoEndpoints();
+    const { wsV2 } = getNadoEndpoints();
     this.setStatus('CONNECTING');
     
-    console.log(`[NadoWS] Connecting to ${wsUrl}...`);
+    console.log(`[NadoWS-v2] Connecting to concurrent-dispatch endpoint: ${wsV2}...`);
     
     try {
-      this.ws = new WebSocket(wsUrl);
+      this.ws = new WebSocket(wsV2);
       this.setupEventHandlers();
     } catch (error) {
-      console.error('[NadoWS] Connection error:', error);
+      console.error('[NadoWS-v2] Connection error:', error);
       this.handleDisconnect();
     }
   }
@@ -73,13 +80,14 @@ class NadoWebSocketClient {
     }
     this.setStatus('DISCONNECTED');
     this.reconnectAttempts = 0;
+    this.pendingRequests.clear();
   }
 
   public send(request: WSClientRequest): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(request));
     } else {
-      console.warn('[NadoWS] Socket is closed. Failed to send message:', request);
+      console.warn('[NadoWS-v2] Socket is closed. Failed to send message:', request);
     }
   }
 
@@ -99,7 +107,7 @@ class NadoWebSocketClient {
         id,
       };
       this.send(subscribeMsg);
-      console.log('[NadoWS] Subscribing to:', key, 'with id:', id);
+      console.log('[NadoWS-v2] Subscribing to:', key, 'with id:', id);
     }
   }
 
@@ -114,44 +122,113 @@ class NadoWebSocketClient {
         id: Math.floor(Math.random() * 1000000),
       };
       this.send(unsubscribeMsg);
-      console.log('[NadoWS] Unsubscribing from:', key);
+      console.log('[NadoWS-v2] Unsubscribing from:', key);
     }
   }
 
+  /**
+   * WebSocket v2 Concurrent Order Execution with Correlated Response Promise
+   * Sets id field inside place_order object for gateway echo
+   */
   public executeOrder(productId: number, order: NadoOrder, signature: string, reqId?: number): number {
-    const id = reqId ?? Math.floor(Math.random() * 1000000);
+    const id = reqId ?? this.nextRequestId++;
     const payload = {
       method: 'execute',
-      id,
       tx: {
         place_order: {
           product_id: productId,
           order,
           signature,
+          id, // v2 correlated ID field
         },
       },
     };
     if (this.status === 'CONNECTED') {
       this.send(payload as any);
-      console.log('[NadoWS] Executing WebSocket order:', id);
+      console.log('[NadoWS-v2] Concurrent execute dispatched (id:', id, ')');
     } else {
-      console.warn('[NadoWS] Cannot execute WS order. Socket disconnected.');
+      console.warn('[NadoWS-v2] Cannot execute WS order. Socket disconnected.');
+    }
+    return id;
+  }
+
+  public executeOrderAsync(productId: number, order: NadoOrder, signature: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const id = this.nextRequestId++;
+      this.pendingRequests.set(id, {
+        resolve,
+        reject,
+        timestamp: Date.now(),
+        requestType: 'place_order',
+      });
+      this.executeOrder(productId, order, signature, id);
+
+      // 10s Timeout guard
+      setTimeout(() => {
+        if (this.pendingRequests.has(id)) {
+          this.pendingRequests.delete(id);
+          reject(new Error(`WebSocket v2 execution timed out for request id ${id}`));
+        }
+      }, 10000);
+    });
+  }
+
+  /**
+   * WebSocket v2 Cancel Orders with Correlated Response
+   */
+  public cancelOrders(productId: number, digests: string[], signature: string, reqId?: number): number {
+    const id = reqId ?? this.nextRequestId++;
+    const payload = {
+      method: 'execute',
+      tx: {
+        cancel_orders: {
+          product_id: productId,
+          digests,
+          signature,
+          id, // v2 correlated ID field
+        },
+      },
+    };
+    if (this.status === 'CONNECTED') {
+      this.send(payload as any);
+      console.log('[NadoWS-v2] Concurrent cancel_orders dispatched (id:', id, ')');
+    }
+    return id;
+  }
+
+  /**
+   * WebSocket v2 Cancel Product Orders with Correlated Response
+   */
+  public cancelProductOrders(productIds: number[], signature: string, reqId?: number): number {
+    const id = reqId ?? this.nextRequestId++;
+    const payload = {
+      method: 'execute',
+      tx: {
+        cancel_product_orders: {
+          product_ids: productIds,
+          signature,
+          id, // v2 correlated ID field
+        },
+      },
+    };
+    if (this.status === 'CONNECTED') {
+      this.send(payload as any);
+      console.log('[NadoWS-v2] Concurrent cancel_product_orders dispatched (id:', id, ')');
     }
     return id;
   }
 
   public queryState(query: any, reqId?: number): number {
-    const id = reqId ?? Math.floor(Math.random() * 1000000);
+    const id = reqId ?? this.nextRequestId++;
     const payload = {
       method: 'query',
-      id,
       ...query,
     };
     if (this.status === 'CONNECTED') {
       this.send(payload as any);
-      console.log('[NadoWS] Querying state over WebSocket:', id);
+      console.log('[NadoWS-v2] Concurrent query dispatched (id:', id, ')');
     } else {
-      console.warn('[NadoWS] Cannot query. Socket disconnected.');
+      console.warn('[NadoWS-v2] Cannot query. Socket disconnected.');
     }
     return id;
   }
@@ -171,7 +248,7 @@ class NadoWebSocketClient {
         signature,
       };
       this.send(authMsg);
-      console.log('[NadoWS] Authenticating subaccount session:', sender);
+      console.log('[NadoWS-v2] Authenticating subaccount session:', sender);
     }
   }
 
@@ -187,7 +264,7 @@ class NadoWebSocketClient {
         stream.type === 'orders' ||
         stream.type === 'subaccount_info'
       ) {
-        this.activeSubscriptions.delete(key);
+        this.unsubscribe(stream);
       }
     }
   }
@@ -220,7 +297,7 @@ class NadoWebSocketClient {
     if (!this.ws) return;
 
     this.ws.onopen = () => {
-      console.log('[NadoWS] Connection established successfully.');
+      console.log('[NadoWS-v2] Connection established successfully.');
       this.setStatus('CONNECTED');
       this.reconnectAttempts = 0;
       
@@ -237,15 +314,26 @@ class NadoWebSocketClient {
           return;
         }
 
+        // v2 Concurrent Dispatch Out-of-Order Response Correlation
+        if (data.id !== undefined && this.pendingRequests.has(data.id)) {
+          const pending = this.pendingRequests.get(data.id)!;
+          this.pendingRequests.delete(data.id);
+          if (data.status === 'success' || !data.error) {
+            pending.resolve(data);
+          } else {
+            pending.reject(new Error(data.error || data.message || 'Execution error'));
+          }
+        }
+
         this.messageListeners.forEach((listener) => listener(data));
       } catch (err) {
         // Handle potential raw texts or non-JSON frame strings
-        console.debug('[NadoWS] Received non-JSON text frame:', event.data);
+        console.debug('[NadoWS-v2] Received non-JSON text frame:', event.data);
       }
     };
 
     this.ws.onerror = (err) => {
-      console.error('[NadoWS] WebSocket internal error:', err);
+      console.error('[NadoWS-v2] WebSocket internal error:', err);
     };
 
     this.ws.onclose = (event) => {
@@ -381,6 +469,18 @@ export function useNadoWebSocket() {
     return client.current.executeOrder(productId, order, signature, reqId);
   }, []);
 
+  const executeOrderAsync = useCallback((productId: number, order: NadoOrder, signature: string) => {
+    return client.current.executeOrderAsync(productId, order, signature);
+  }, []);
+
+  const cancelOrders = useCallback((productId: number, digests: string[], signature: string, reqId?: number) => {
+    return client.current.cancelOrders(productId, digests, signature, reqId);
+  }, []);
+
+  const cancelProductOrders = useCallback((productIds: number[], signature: string, reqId?: number) => {
+    return client.current.cancelProductOrders(productIds, signature, reqId);
+  }, []);
+
   const queryState = useCallback((query: any, reqId?: number) => {
     return client.current.queryState(query, reqId);
   }, []);
@@ -392,6 +492,9 @@ export function useNadoWebSocket() {
     authenticate,
     clearAuthentication,
     executeOrder,
+    executeOrderAsync,
+    cancelOrders,
+    cancelProductOrders,
     queryState,
     addListener,
     removeListener,
