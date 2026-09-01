@@ -11,21 +11,90 @@ export function getNadoEnv(): NadoEnv {
   return 'testnet';
 }
 
-// Retrieve dynamic REST URLs based on active configuration
+// Retrieve dynamic REST & WebSocket URLs based on unified endpoints
 export function getNadoEndpoints() {
   const env = getNadoEnv();
   if (env === 'mainnet') {
     return {
-      gateway: 'https://gateway.prod.nado.xyz/v1',
+      gateway: 'https://api.prod.nado.xyz/gateway/v1',
+      wsV1: 'wss://api.prod.nado.xyz/gateway/v1/ws',
+      wsV2: 'wss://api.prod.nado.xyz/gateway/ws/v2',
       archive: 'https://archive.prod.nado.xyz/v1',
-      ws: 'wss://gateway.prod.nado.xyz/v1/subscribe',
+      ws: 'wss://api.prod.nado.xyz/gateway/v1/ws',
     };
   }
   return {
-    gateway: 'https://gateway.test.nado.xyz/v1',
+    gateway: 'https://api.test.nado.xyz/gateway/v1',
+    wsV1: 'wss://api.test.nado.xyz/gateway/v1/ws',
+    wsV2: 'wss://api.test.nado.xyz/gateway/ws/v2',
     archive: 'https://archive.test.nado.xyz/v1',
-    ws: 'wss://gateway.test.nado.xyz/v1/subscribe',
+    ws: 'wss://api.test.nado.xyz/gateway/v1/ws',
   };
+}
+
+/**
+ * Execute an off-chain sequencer action via POST [GATEWAY_REST_ENDPOINT]/execute
+ * Must set Accept-Encoding to include gzip, br, deflate.
+ */
+export async function executeNadoAction(payload: any): Promise<any> {
+  const { gateway } = getNadoEndpoints();
+  const url = `${gateway}/execute`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept-Encoding': 'gzip, br, deflate',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(`Execute rejected (${response.status}): ${result.message || JSON.stringify(result)}`);
+  }
+  return result;
+}
+
+/**
+ * Query off-chain sequencer state via GET/POST [GATEWAY_REST_ENDPOINT]/query
+ * For GET, parameters are encoded into URL query strings.
+ */
+export async function queryNadoState(queryParams: Record<string, any>, method: 'GET' | 'POST' = 'GET'): Promise<any> {
+  const { gateway } = getNadoEndpoints();
+
+  let url = `${gateway}/query`;
+  const options: RequestInit = {
+    method,
+    headers: {
+      'Accept-Encoding': 'gzip, br, deflate',
+    },
+  };
+
+  if (method === 'GET') {
+    const search = new URLSearchParams();
+    Object.entries(queryParams).forEach(([k, v]) => {
+      if (typeof v === 'object') {
+        search.set(k, JSON.stringify(v));
+      } else {
+        search.set(k, String(v));
+      }
+    });
+    url = `${url}?${search.toString()}`;
+  } else {
+    options.headers = {
+      ...options.headers,
+      'Content-Type': 'application/json',
+    };
+    options.body = JSON.stringify(queryParams);
+  }
+
+  const response = await fetch(url, options);
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(`Query failed (${response.status}): ${result.message || JSON.stringify(result)}`);
+  }
+  return result;
 }
 
 /**

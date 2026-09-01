@@ -140,6 +140,22 @@ class NadoWebSocketClient {
     return id;
   }
 
+  public queryState(query: any, reqId?: number): number {
+    const id = reqId ?? Math.floor(Math.random() * 1000000);
+    const payload = {
+      method: 'query',
+      id,
+      ...query,
+    };
+    if (this.status === 'CONNECTED') {
+      this.send(payload as any);
+      console.log('[NadoWS] Querying state over WebSocket:', id);
+    } else {
+      console.warn('[NadoWS] Cannot query. Socket disconnected.');
+    }
+    return id;
+  }
+
   public authenticate(sender: string, expiration: string | number, signature: string): void {
     this.authPayload = {
       id: 0,
@@ -365,6 +381,10 @@ export function useNadoWebSocket() {
     return client.current.executeOrder(productId, order, signature, reqId);
   }, []);
 
+  const queryState = useCallback((query: any, reqId?: number) => {
+    return client.current.queryState(query, reqId);
+  }, []);
+
   return {
     status,
     subscribe,
@@ -372,6 +392,7 @@ export function useNadoWebSocket() {
     authenticate,
     clearAuthentication,
     executeOrder,
+    queryState,
     addListener,
     removeListener,
     isConnected: status === 'CONNECTED',
