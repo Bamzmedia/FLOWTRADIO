@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Search, Star, TrendingUp, TrendingDown, ArrowRight, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useLocalization } from '@/components/LocalizationContext';
 import Navbar from '@/components/Navbar';
+import { useNadoMarketData } from '@/hooks/useNadoMarketData';
 
 type Market = {
   id: string;
@@ -49,82 +50,93 @@ export default function MarketsPage() {
   const [activeCategory, setActiveCategory] = useState<'all' | 'trending' | 'gainers' | 'losers' | 'watchlist'>('all');
   const [favorites, setFavorites] = useState<string[]>(['BTC', 'NADO']);
 
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  // Subscribe to live Nado WebSocket market feeds for SOL-PERP (1), BTC-PERP (2), ETH-PERP (4)
+  const { trades: liveTrades } = useNadoMarketData([1, 2, 4]);
 
-  // Fetch prices from CoinGecko Free API with Binance fallback
+  // Update market prices instantly whenever live WebSocket trade fills arrive
+  useEffect(() => {
+    const productSymbolMap: Record<number, string> = { 1: 'SOL', 2: 'BTC', 4: 'ETH' };
+    
+    Object.entries(liveTrades).forEach(([pIdStr, tradeList]) => {
+      const pId = Number(pIdStr);
+      const symbol = productSymbolMap[pId];
+      if (symbol && tradeList.length > 0) {
+        const latestTrade = tradeList[0];
+        setMarketsData((prev) =>
+          prev.map((m) => {
+            if (m.symbol === symbol && latestTrade.price > 0) {
+              return { ...m, price: latestTrade.price };
+            }
+            return m;
+          })
+        );
+        setLastUpdatedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      }
+    });
+  }, [liveTrades]);
+
+  // Fetch prices from Binance REST API with CoinGecko fallback
   const fetchPrices = async () => {
     setIsRefreshing(true);
-    let success = false;
 
     try {
-      const cgUrl = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,avalanche-2,chainlink,arbitrum&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true';
-      const res = await fetch(cgUrl);
-
-      if (res.ok) {
-        const data = await res.json();
+      const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "LINKUSDT", "ARBUSDT"];
+      const bRes = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`);
+      if (bRes.ok) {
+        const bData = await bRes.json();
         setMarketsData(prev => prev.map(m => {
-          const cgKey = Object.keys(COINGECKO_MAP).find(k => COINGECKO_MAP[k] === m.id);
-          if (cgKey && data[cgKey]) {
-            const coin = data[cgKey];
+          const ticker = bData.find((t: any) => t.symbol === `${m.symbol}USDT`);
+          if (ticker) {
             return {
               ...m,
-              price: coin.usd || m.price,
-              change24h: coin.usd_24h_change !== undefined ? parseFloat(coin.usd_24h_change.toFixed(2)) : m.change24h,
-              volume24h: coin.usd_24h_vol || m.volume24h,
+              price: parseFloat(ticker.lastPrice),
+              change24h: parseFloat(ticker.priceChangePercent),
+              volume24h: parseFloat(ticker.quoteVolume),
             };
           }
           return m;
         }));
         setIsCachedData(false);
-        success = true;
       } else {
-        throw new Error(`CoinGecko status ${res.status}`);
+        throw new Error(`Binance status ${bRes.status}`);
       }
     } catch (err) {
-      console.warn("CoinGecko fetch failed. Attempting Binance REST fallback...", err);
+      console.warn("Binance fetch failed. Attempting CoinGecko fallback...", err);
       try {
-        const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "LINKUSDT", "ARBUSDT"];
-        const bRes = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`);
-        if (bRes.ok) {
-          const bData = await bRes.json();
+        const cgUrl = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,avalanche-2,chainlink,arbitrum&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true';
+        const res = await fetch(cgUrl);
+        if (res.ok) {
+          const data = await res.json();
           setMarketsData(prev => prev.map(m => {
-            const ticker = bData.find((t: any) => t.symbol === `${m.symbol}USDT`);
-            if (ticker) {
+            const cgKey = Object.keys(COINGECKO_MAP).find(k => COINGECKO_MAP[k] === m.id);
+            if (cgKey && data[cgKey]) {
+              const coin = data[cgKey];
               return {
                 ...m,
-                price: parseFloat(ticker.lastPrice),
-                change24h: parseFloat(ticker.priceChangePercent),
-                volume24h: parseFloat(ticker.quoteVolume),
+                price: coin.usd || m.price,
+                change24h: coin.usd_24h_change !== undefined ? parseFloat(coin.usd_24h_change.toFixed(2)) : m.change24h,
+                volume24h: coin.usd_24h_vol || m.volume24h,
               };
             }
             return m;
           }));
           setIsCachedData(false);
-          success = true;
         }
-      } catch (bErr) {
-        console.error("All live price sources failed. Using cached fallback data.", bErr);
+      } catch (cgErr) {
+        console.error("All live price sources failed. Using cached fallback data.", cgErr);
         setIsCachedData(true);
       }
     }
 
     setLastUpdatedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     setIsRefreshing(false);
-    reset5MinTimer();
-  };
-
-  // Reset 5-minute timer loop
-  const reset5MinTimer = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(fetchPrices, 300000); // 300,000ms = 5 minutes
   };
 
   useEffect(() => {
     fetchPrices();
-
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
+    // Fast 15-second background refresh interval instead of 5-minute delay
+    const interval = setInterval(fetchPrices, 15000);
+    return () => clearInterval(interval);
   }, []);
 
   const toggleFavorite = (symbol: string) => {
@@ -222,7 +234,9 @@ export default function MarketsPage() {
               Last updated: <span className="text-white font-mono font-bold">{lastUpdatedTime || '--:--:--'}</span>
             </span>
             <span className="text-gray-600">|</span>
-            <span className="text-xs text-gray-400">5-min auto-refresh</span>
+            <span className="text-xs text-primary font-bold flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" /> WebSocket Live Feed
+            </span>
             
             {isCachedData ? (
               <span className="flex items-center gap-1.5 bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 px-2.5 py-1 rounded-full text-xs font-semibold">
