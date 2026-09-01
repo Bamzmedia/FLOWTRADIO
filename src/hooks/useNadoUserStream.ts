@@ -182,13 +182,15 @@ export function useNadoUserStream() {
         authenticateUser();
       }
     } else {
-      setIsAuthenticated(false);
-      setIsAuthenticating(false);
-      ws.clearAuthentication();
-      setOrders([]);
-      setFills([]);
-      setPositions({});
-      setSubaccountInfo(null);
+      if (isAuthenticated || isAuthenticating) {
+        setIsAuthenticated(false);
+        setIsAuthenticating(false);
+        ws.clearAuthentication();
+        setOrders([]);
+        setFills([]);
+        setPositions({});
+        setSubaccountInfo(null);
+      }
     }
   }, [isConnected, address, ws.isConnected, isAuthenticated, isAuthenticating, authenticateUser]);
 
