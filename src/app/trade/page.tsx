@@ -268,7 +268,7 @@ export default function ProTradePage() {
     return () => clearInterval(interval);
   }, [activeMarket]);
 
-  // Sync Price via REST & WebSocket (with Binance backup polling)
+  // Sync Price via Binance/Pyth Real-Time WebSocket with REST fallback
   useEffect(() => {
     let ws: WebSocket | null = null;
     let isMounted = true;
@@ -285,53 +285,45 @@ export default function ProTradePage() {
     };
 
     const initWebSocket = () => {
-      ws = new WebSocket('wss://hermes.pyth.network/ws');
+      try {
+        const symbol = activeMarket.binanceSymbol.toLowerCase();
+        ws = new WebSocket(`wss://stream.binance.com:9443/ws/${symbol}@trade`);
 
-      ws.onopen = () => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: "subscribe",
-            ids: [activeMarket.pythId]
-          }));
-        }
-      };
+        ws.onopen = () => {
+          // Connected to live trades stream
+        };
 
-      ws.onmessage = (event) => {
-        if (!isMounted) return;
-        try {
-          const data = JSON.parse(event.data);
-          if (data && data.type === 'value' && data.value && data.value.price) {
-            const priceData = data.value.price;
-            const rawPrice = BigInt(priceData.price);
-            const expo = priceData.expo;
-            const finalPrice = Number(rawPrice) * Math.pow(10, expo);
-            setPrice(finalPrice);
-            
-            // Cancel backup polling if WebSocket is successfully feeding prices
-            if (pollInterval) {
-              clearInterval(pollInterval);
-              pollInterval = null;
+        ws.onmessage = (event) => {
+          if (!isMounted) return;
+          try {
+            const data = JSON.parse(event.data);
+            if (data && data.p) {
+              const livePrice = parseFloat(data.p);
+              if (livePrice > 0) {
+                setPrice(livePrice);
+              }
             }
+          } catch {
+            // Ignore parse errors
           }
-        } catch (err) {
-          console.error("WebSocket message parse error", err);
-        }
-      };
+        };
 
-      ws.onerror = (err) => {
-        console.error("WebSocket connection failed. Falling back to REST polling.", err);
-        startBackupPolling();
-      };
-
-      ws.onclose = () => {
-        if (isMounted) {
+        ws.onerror = () => {
           startBackupPolling();
-          setTimeout(initWebSocket, 5000);
-        }
-      };
+        };
+
+        ws.onclose = () => {
+          if (isMounted) {
+            startBackupPolling();
+            setTimeout(initWebSocket, 5000);
+          }
+        };
+      } catch {
+        startBackupPolling();
+      }
     };
 
-    // Load initial price
+    // Load initial price immediately
     fetchPythPrice(activeMarket.pythId, activeMarket.binanceSymbol).then((initialPrice) => {
       if (initialPrice && isMounted) {
         setPrice(initialPrice);
@@ -339,11 +331,14 @@ export default function ProTradePage() {
     });
 
     initWebSocket();
-    startBackupPolling(); // Start backup REST polling immediately (handles 401 Pyth block gracefully)
 
     return () => {
       isMounted = false;
-      if (ws) ws.close();
+      if (ws) {
+        try {
+          ws.close();
+        } catch {}
+      }
       if (pollInterval) clearInterval(pollInterval);
     };
   }, [activeMarket]);
