@@ -88,13 +88,18 @@ class NadoWebSocketClient {
     this.activeSubscriptions.set(key, stream);
 
     if (this.status === 'CONNECTED') {
+      let id = Math.floor(Math.random() * 1000000);
+      if (stream.type === 'book_depth') id = 1;
+      else if (stream.type === 'trade') id = 2;
+      else if (stream.type === 'candlestick') id = 3;
+
       const subscribeMsg: WSClientRequest = {
         method: 'subscribe',
         stream,
-        id: Math.floor(Math.random() * 1000000),
+        id,
       };
       this.send(subscribeMsg);
-      console.log('[NadoWS] Subscribing to:', key);
+      console.log('[NadoWS] Subscribing to:', key, 'with id:', id);
     }
   }
 

@@ -113,8 +113,22 @@ export default function ProTradePage() {
   const productIdMap: Record<string, number> = { 'SOL-PERP': 1, 'BTC-PERP': 2, 'ETH-PERP': 4 };
   const activeProductId = productIdMap[activeMarket.id] || 4;
 
-  // Live Market Data stream via WebSocket
-  const { orderBooks: liveOrderBooks, trades: liveTradesMap, candlesticks: liveCandlesMap } = useNadoMarketData([activeProductId]);
+  // Active Granularity mapping in seconds for Nado Network
+  const granularityMap: Record<string, number> = {
+    '1m': 60,
+    '5m': 300,
+    '15m': 900,
+    '1H': 3600,
+    '4H': 14400,
+    '1D': 86400,
+  };
+  const currentGranularity = granularityMap[chartResolution] || 3600;
+
+  // Live Market Data stream via Nado WebSocket
+  const { orderBooks: liveOrderBooks, trades: liveTradesMap, candlesticks: liveCandlesMap } = useNadoMarketData(
+    [activeProductId],
+    currentGranularity
+  );
 
   // Toast Helper
   const removeToast = (id: string) => {
@@ -452,6 +466,24 @@ export default function ProTradePage() {
       isMounted = false;
     };
   }, [activeMarket, chartResolution]);
+
+  // Live Nado Network Candlestick Stream Listener
+  useEffect(() => {
+    const bars = liveCandlesMap[activeProductId];
+    if (bars && bars.length > 0 && seriesRef.current) {
+      if (bars.length > 1) {
+        seriesRef.current.setData(bars);
+        currentCandleRef.current = { ...bars[bars.length - 1] };
+      } else {
+        const latestBar = bars[bars.length - 1];
+        try {
+          seriesRef.current.update(latestBar);
+          currentCandleRef.current = { ...latestBar };
+          setPrice(latestBar.close);
+        } catch {}
+      }
+    }
+  }, [liveCandlesMap, activeProductId]);
 
   const handleExecute = async () => {
     if (!isConnected) {
