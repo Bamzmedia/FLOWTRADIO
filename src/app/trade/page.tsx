@@ -265,11 +265,11 @@ export default function ProTradePage() {
 
     // Generate smooth realistic candlestick history around basePrice
     const bars = [];
-    const now = Math.floor(Date.now() / 1000);
     const step = interval === '1m' ? 60 : interval === '5m' ? 300 : interval === '15m' ? 900 : interval === '1H' ? 3600 : interval === '4H' ? 14400 : 86400;
+    const nowRounded = Math.floor(Math.floor(Date.now() / 1000) / step) * step;
     let curr = basePrice * 0.98;
     for (let i = 80; i >= 0; i--) {
-      const time = now - (i * step);
+      const time = (nowRounded - (i * step)) as any;
       const open = curr;
       const change = (Math.random() - 0.49) * (basePrice * 0.008);
       const close = Math.max(0.01, open + change);
@@ -294,13 +294,31 @@ export default function ProTradePage() {
       lastRealTick = Date.now();
 
       if (seriesRef.current && currentCandleRef.current) {
-        const c = currentCandleRef.current;
-        c.high = Math.max(c.high, newPrice);
-        c.low = Math.min(c.low, newPrice);
-        c.close = newPrice;
-        try {
-          seriesRef.current.update(c);
-        } catch {}
+        const step = chartResolution === '1m' ? 60 : chartResolution === '5m' ? 300 : chartResolution === '15m' ? 900 : chartResolution === '1H' ? 3600 : chartResolution === '4H' ? 14400 : 86400;
+        const nowSec = Math.floor(Date.now() / 1000);
+        const currentSlot = Math.floor(nowSec / step) * step;
+
+        if (currentSlot > currentCandleRef.current.time) {
+          const newBar = {
+            time: currentSlot as any,
+            open: newPrice,
+            high: newPrice,
+            low: newPrice,
+            close: newPrice,
+          };
+          currentCandleRef.current = newBar;
+          try {
+            seriesRef.current.update(newBar);
+          } catch {}
+        } else {
+          const c = currentCandleRef.current;
+          c.high = Math.max(c.high, newPrice);
+          c.low = Math.min(c.low, newPrice);
+          c.close = newPrice;
+          try {
+            seriesRef.current.update(c);
+          } catch {}
+        }
       }
     };
 
@@ -361,20 +379,11 @@ export default function ProTradePage() {
     // 4. Continuous High-Frequency Micro-Tick Streamer (every 600ms)
     const tickInterval = setInterval(() => {
       if (!isMounted) return;
-      // If no WebSocket tick arrived recently, inject micro-fluctuation to keep live feel
       if (Date.now() - lastRealTick > 1200) {
         setPrice((prev) => {
           const delta = (Math.random() - 0.48) * (prev * 0.0003);
           const next = Math.round((prev + delta) * 100) / 100;
-          if (seriesRef.current && currentCandleRef.current) {
-            const c = currentCandleRef.current;
-            c.high = Math.max(c.high, next);
-            c.low = Math.min(c.low, next);
-            c.close = next;
-            try {
-              seriesRef.current.update(c);
-            } catch {}
-          }
+          applyPriceUpdate(next);
           return next;
         });
       }
