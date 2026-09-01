@@ -87,6 +87,7 @@ export default function ProTradePage() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [takeProfit, setTakeProfit] = useState('');
   const [stopLoss, setStopLoss] = useState('');
+  const [trailingPct, setTrailingPct] = useState('');
   const [oneClick, setOneClick] = useState(false);
   const [payAmount, setPayAmount] = useState<string>('');
   const [showSubaccountModal, setShowSubaccountModal] = useState(false);
@@ -596,6 +597,27 @@ export default function ProTradePage() {
         }
       }
 
+      // Dispatch Conditional Orders to Relayer if any
+      if (takeProfit || stopLoss || trailingPct) {
+        try {
+          await fetch('http://localhost:4000/register-order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              productId,
+              side: tradeDirection,
+              amount: positionSizeAsset,
+              tpPrice: takeProfit ? parseFloat(takeProfit) : null,
+              slPrice: stopLoss ? parseFloat(stopLoss) : null,
+              trailPct: trailingPct ? parseFloat(trailingPct) : null,
+              entryPrice: price,
+            })
+          });
+        } catch (e) {
+          console.error('[Relayer] Failed to register conditional order', e);
+        }
+      }
+
       // Update wallet transaction log
       addTransaction({
         type: 'Trade',
@@ -631,6 +653,7 @@ export default function ProTradePage() {
       setPayAmount('');
       setTakeProfit('');
       setStopLoss('');
+      setTrailingPct('');
     } catch (err: any) {
       console.error('[OrderExecution] Execution error:', err);
       // Remove Pending Toast & Push Error Toast
@@ -1130,14 +1153,36 @@ export default function ProTradePage() {
                 </button>
                 
                 {showAdvanced && (
-                  <div className="mt-4 space-y-3 p-3 bg-black/20 rounded-lg border border-white/5">
+                  <div className="mt-4 space-y-3 p-4 bg-black/20 rounded-xl border border-white/5">
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-gray-400">Take Profit</span>
-                      <input type="text" value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} placeholder="None" className="bg-black/40 border border-white/5 rounded px-2 py-1 text-sm w-24 text-right outline-none focus:border-primary/50" />
+                      <input 
+                        type="text" 
+                        placeholder="None" 
+                        value={takeProfit}
+                        onChange={(e) => setTakeProfit(e.target.value)}
+                        className="bg-black/40 border border-white/5 rounded px-2 py-1 text-sm w-24 text-right outline-none focus:border-primary/50" 
+                      />
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-gray-400">Stop Loss</span>
-                      <input type="text" value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} placeholder="None" className="bg-black/40 border border-white/5 rounded px-2 py-1 text-sm w-24 text-right outline-none focus:border-primary/50" />
+                      <input 
+                        type="text" 
+                        placeholder="None" 
+                        value={stopLoss}
+                        onChange={(e) => setStopLoss(e.target.value)}
+                        className="bg-black/40 border border-white/5 rounded px-2 py-1 text-sm w-24 text-right outline-none focus:border-primary/50" 
+                      />
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-400">Trailing Stop (%)</span>
+                      <input 
+                        type="text" 
+                        placeholder="None" 
+                        value={trailingPct}
+                        onChange={(e) => setTrailingPct(e.target.value)}
+                        className="bg-black/40 border border-white/5 rounded px-2 py-1 text-sm w-24 text-right outline-none focus:border-primary/50" 
+                      />
                     </div>
                   </div>
                 )}
