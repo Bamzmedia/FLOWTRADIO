@@ -243,12 +243,34 @@ export default function ProTradePage() {
 
   const currentCandleRef = useRef<{ time: number; open: number; high: number; low: number; close: number } | null>(null);
 
-  // Helper: Fetch Binance Klines for Chart with realistic fallback generator
+  // Helper: Fast Instant Candle Generator (0ms delay)
+  const generateInstantCandles = (interval: string, basePrice: number) => {
+    const bars = [];
+    const step = interval === '1m' ? 60 : interval === '5m' ? 300 : interval === '15m' ? 900 : interval === '1H' ? 3600 : interval === '4H' ? 14400 : 86400;
+    const nowRounded = Math.floor(Math.floor(Date.now() / 1000) / step) * step;
+    let curr = basePrice * 0.985;
+    for (let i = 90; i >= 0; i--) {
+      const time = (nowRounded - (i * step)) as any;
+      const open = curr;
+      const change = (Math.sin(i * 0.4) * 0.003 + (Math.random() - 0.48) * 0.006) * basePrice;
+      const close = Math.max(0.01, open + change);
+      const high = Math.max(open, close) + Math.random() * (basePrice * 0.003);
+      const low = Math.min(open, close) - Math.random() * (basePrice * 0.003);
+      bars.push({ time, open, high, low, close });
+      curr = close;
+    }
+    return bars;
+  };
+
+  // Helper: Fetch Binance Klines with strict 1.2s timeout
   const fetchHistoricalData = async (symbol: string, interval: string, basePrice: number) => {
     const binanceInterval = interval.toLowerCase();
-    const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${binanceInterval}&limit=80`;
+    const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${binanceInterval}&limit=90`;
     try {
-      const response = await fetch(url);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1200);
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
       if (response.ok) {
         const klines = await response.json();
         return klines.map((k: any) => ({
@@ -260,25 +282,9 @@ export default function ProTradePage() {
         }));
       }
     } catch {
-      // Fallback historical candle generator
+      // Fallback to server route or instant generator
     }
-
-    // Generate smooth realistic candlestick history around basePrice
-    const bars = [];
-    const step = interval === '1m' ? 60 : interval === '5m' ? 300 : interval === '15m' ? 900 : interval === '1H' ? 3600 : interval === '4H' ? 14400 : 86400;
-    const nowRounded = Math.floor(Math.floor(Date.now() / 1000) / step) * step;
-    let curr = basePrice * 0.98;
-    for (let i = 80; i >= 0; i--) {
-      const time = (nowRounded - (i * step)) as any;
-      const open = curr;
-      const change = (Math.random() - 0.49) * (basePrice * 0.008);
-      const close = Math.max(0.01, open + change);
-      const high = Math.max(open, close) + Math.random() * (basePrice * 0.004);
-      const low = Math.min(open, close) - Math.random() * (basePrice * 0.004);
-      bars.push({ time, open, high, low, close });
-      curr = close;
-    }
-    return bars;
+    return null;
   };
 
   // Live Multi-Source Price Sync & Micro-Tick Real-Time Stream
@@ -437,6 +443,14 @@ export default function ProTradePage() {
     chartRef.current = chart;
     seriesRef.current = candlestickSeries;
 
+    // Instant zero-delay initial load on mount
+    const defaultPrices: Record<string, number> = { 'SOL-PERP': 148.5, 'BTC-PERP': 86500.0, 'ETH-PERP': 2680.0 };
+    const basePrice = price > 0 ? price : (defaultPrices[activeMarket.id] || 100);
+    const instantData = generateInstantCandles(chartResolution, basePrice);
+    candlestickSeries.setData(instantData);
+    currentCandleRef.current = { ...instantData[instantData.length - 1] };
+    chart.timeScale().fitContent();
+
     const handleResize = () => {
       if (chartContainerRef.current && chartRef.current) {
         chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
@@ -452,24 +466,27 @@ export default function ProTradePage() {
     };
   }, []);
 
-  // Fetch and Load Historical Chart Data
+  // Fetch and Load Historical Chart Data Instantly + Background Sync
   useEffect(() => {
+    if (!seriesRef.current || !chartRef.current) return;
+    
     let isMounted = true;
-    const loadChartData = async () => {
-      if (!seriesRef.current || !chartRef.current) return;
-      
-      const defaultPrices: Record<string, number> = { 'SOL-PERP': 148.5, 'BTC-PERP': 86500.0, 'ETH-PERP': 2680.0 };
-      const basePrice = price > 0 ? price : (defaultPrices[activeMarket.id] || 100);
+    const defaultPrices: Record<string, number> = { 'SOL-PERP': 148.5, 'BTC-PERP': 86500.0, 'ETH-PERP': 2680.0 };
+    const basePrice = price > 0 ? price : (defaultPrices[activeMarket.id] || 100);
 
-      const data = await fetchHistoricalData(activeMarket.binanceSymbol, chartResolution, basePrice);
-      if (isMounted && data.length > 0) {
+    // 1. Instant 0ms render immediately
+    const instantData = generateInstantCandles(chartResolution, basePrice);
+    seriesRef.current.setData(instantData);
+    currentCandleRef.current = { ...instantData[instantData.length - 1] };
+    chartRef.current.timeScale().fitContent();
+
+    // 2. Non-blocking background fetch
+    fetchHistoricalData(activeMarket.binanceSymbol, chartResolution, basePrice).then((data) => {
+      if (isMounted && data && data.length > 0 && seriesRef.current) {
         seriesRef.current.setData(data);
         currentCandleRef.current = { ...data[data.length - 1] };
-        chartRef.current.timeScale().fitContent();
       }
-    };
-    
-    setTimeout(loadChartData, 100);
+    });
 
     return () => {
       isMounted = false;
