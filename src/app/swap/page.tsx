@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import Navbar from '@/components/Navbar';
 import { useLocalization } from '@/components/LocalizationContext';
 import { useWallet } from '@/components/WalletContext';
-import { ArrowDown, Settings, Zap, Clock, AlertTriangle, RefreshCw, ChevronDown } from 'lucide-react';
+import { useAppKit } from '@reown/appkit/react';
+import { ArrowDown, Settings, Zap, RefreshCw, ChevronDown, Wallet } from 'lucide-react';
 import { useNadoWebSocket } from '@/hooks/useNadoWebSocket';
 import { useNadoMarketData } from '@/hooks/useNadoMarketData';
 import { NadoOrder } from '@/types/nado';
@@ -17,8 +18,9 @@ const ASSETS = [
 ];
 
 export default function SwapPage() {
-  const { t, formatCurrency, slippage } = useLocalization();
-  const { isConnected, balance, network, addTransaction, updateTokenBalance, address } = useWallet();
+  const { t, formatCurrency } = useLocalization();
+  const { isConnected, balance, network, addTransaction, updateTokenBalance, address, tokenBalances } = useWallet();
+  const { open } = useAppKit();
   const wsClient = useNadoWebSocket();
   const { orderBooks } = useNadoMarketData([1, 2, 4]);
   
@@ -28,32 +30,7 @@ export default function SwapPage() {
   
   const [selectedSlippage, setSelectedSlippage] = useState<number>(0.5); // 0.1%, 0.5%, 1.0%
   const [showSettings, setShowSettings] = useState(false);
-  
-  const [timeLeft, setTimeLeft] = useState<number>(600);
-  const [isPriceExpired, setIsPriceExpired] = useState<boolean>(false);
   const [isSwapping, setIsSwapping] = useState<boolean>(false);
-
-  useEffect(() => {
-    if (timeLeft <= 0) {
-      setIsPriceExpired(true);
-      return;
-    }
-    const timer = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          setIsPriceExpired(true);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [timeLeft]);
-
-  const handleAcceptUpdatedRate = () => {
-    setTimeLeft(600);
-    setIsPriceExpired(false);
-  };
 
   const activeProductId = payAsset.isBase ? receiveAsset.productId! : payAsset.productId!;
   const isBuyingAsset = payAsset.isBase; // USDC -> ETH is buying ETH
@@ -74,13 +51,11 @@ export default function SwapPage() {
     basePrice = midPrice;
 
     if (numPayAmount > 0) {
-      // Simple order book depth impact calculation
       let remainingAmount = isBuyingAsset ? numPayAmount : numPayAmount;
       let totalCost = 0;
       let assetReceived = 0;
       
       if (isBuyingAsset) {
-        // USDC to Asset (Buy)
         for (let i = 0; i < book.asks.length && remainingAmount > 0; i++) {
           const [px, size] = book.asks[i];
           const usdcAvailableAtLevel = px * size;
@@ -97,7 +72,6 @@ export default function SwapPage() {
         receiveAmount = assetReceived;
         executionPrice = totalCost / receiveAmount;
       } else {
-        // Asset to USDC (Sell)
         for (let i = 0; i < book.bids.length && remainingAmount > 0; i++) {
           const [px, size] = book.bids[i];
           const assetAvailableAtLevel = size;
@@ -112,13 +86,12 @@ export default function SwapPage() {
           }
         }
         receiveAmount = assetReceived;
-        executionPrice = assetReceived / totalCost; // Price in terms of USDC per asset
+        executionPrice = assetReceived / totalCost;
       }
       
       priceImpact = Math.abs((executionPrice - midPrice) / midPrice) * 100;
     }
   } else {
-    // Fallback if no order book (e.g. not connected or mock prices)
     basePrice = receiveAsset.symbol === 'ETH' ? 2400 : receiveAsset.symbol === 'BTC' ? 62000 : receiveAsset.symbol === 'SOL' ? 145 : 1;
     if (!payAsset.isBase) {
       basePrice = payAsset.symbol === 'ETH' ? 2400 : payAsset.symbol === 'BTC' ? 62000 : payAsset.symbol === 'SOL' ? 145 : 1;
@@ -126,7 +99,7 @@ export default function SwapPage() {
     const mockRate = isBuyingAsset ? 1 / basePrice : basePrice;
     receiveAmount = numPayAmount * mockRate;
     executionPrice = basePrice;
-    priceImpact = (numPayAmount / 10000) * 0.1; // mock impact
+    priceImpact = (numPayAmount / 10000) * 0.1;
   }
 
   const handleSwapAssets = () => {
@@ -137,12 +110,12 @@ export default function SwapPage() {
   };
 
   const handleSwap = async () => {
-    if (isPriceExpired) {
-      handleAcceptUpdatedRate();
-      return;
-    }
     if (!isConnected) {
-      alert("Please connect your wallet first!");
+      try {
+        open();
+      } catch {
+        alert("Please connect your wallet first!");
+      }
       return;
     }
     if (numPayAmount <= 0) {
@@ -157,19 +130,17 @@ export default function SwapPage() {
     setIsSwapping(true);
     
     try {
-      // Create Nado Order
       const limitPrice = isBuyingAsset 
         ? executionPrice * (1 + (selectedSlippage / 100))
         : executionPrice * (1 - (selectedSlippage / 100));
         
       const amountX18 = BigInt(Math.floor((isBuyingAsset ? receiveAmount : -numPayAmount) * 1e18));
       const priceX18 = BigInt(Math.floor(limitPrice * 1e18));
-      const expiration = Math.floor(Date.now() / 1000) + 60; // 60s
+      const expiration = Math.floor(Date.now() / 1000) + 60;
       
       const senderName = "default";
       let senderBytes32 = "0x" + "00".repeat(32);
       if (address) {
-        // Safe check for window/Buffer in browser
         const addrHex = address.replace("0x", "");
         let nameHex = "";
         for (let i = 0; i < senderName.length; i++) {
@@ -187,12 +158,10 @@ export default function SwapPage() {
         nonce: (Date.now() * 1000000).toString(),
       };
 
-      // Mock signature for demo purposes
       const signature = '0x' + '1b'.repeat(65);
       
       wsClient.executeOrder(activeProductId, order, signature);
       
-      // Deduct Pay Asset, Add Receive Asset
       if (payAsset.isBase) {
         addTransaction({ type: 'Swap', amount: -numPayAmount, asset: 'USDC', network: network });
         updateTokenBalance(receiveAsset.symbol, receiveAmount);
@@ -203,7 +172,6 @@ export default function SwapPage() {
 
       alert(`Successfully swapped ${numPayAmount} ${payAsset.symbol} for ${receiveAmount.toFixed(4)} ${receiveAsset.symbol}!`);
       setPayAmount('');
-      handleAcceptUpdatedRate();
     } catch (err) {
       console.error(err);
       alert("Swap failed.");
@@ -212,10 +180,20 @@ export default function SwapPage() {
     }
   };
 
-  const formatTimer = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  // Helper to format balance string clearly
+  const getPayBalanceDisplay = () => {
+    if (!isConnected) {
+      return (
+        <button onClick={() => open()} className="text-primary hover:underline flex items-center gap-1 font-bold text-xs">
+          <Wallet size={12} /> Connect Wallet
+        </button>
+      );
+    }
+    if (payAsset.isBase) {
+      return <span>Balance: {formatCurrency(balance)}</span>;
+    }
+    const tokenBal = tokenBalances?.[payAsset.symbol] || 0;
+    return <span>Balance: {tokenBal.toFixed(4)} {payAsset.symbol}</span>;
   };
 
   return (
@@ -228,7 +206,7 @@ export default function SwapPage() {
         <div className="w-full max-w-md">
           <div className="text-center mb-8">
             <h1 className="text-4xl font-extrabold mb-2">{t('swapTitle')}</h1>
-            <p className="text-gray-400">{t('swapSubtitle')} over Nado DEX</p>
+            <p className="text-gray-400">{t('swapSubtitle')} over Neotradio DEX</p>
           </div>
 
           <div className="glass-panel p-6 rounded-3xl shadow-2xl border-t-primary/20 border-t relative">
@@ -237,13 +215,6 @@ export default function SwapPage() {
               <span className="font-bold text-lg">{t('swapTitle')}</span>
               
               <div className="flex items-center gap-2">
-                <span className={`text-xs font-mono px-2.5 py-1 rounded-full border flex items-center gap-1.5 font-bold ${
-                  isPriceExpired ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-primary/10 border-primary/30 text-primary'
-                }`}>
-                  <Clock size={12} />
-                  {isPriceExpired ? '00:00' : formatTimer(timeLeft)}
-                </span>
-
                 <div className="relative">
                   <button onClick={() => setShowSettings(!showSettings)} className={`text-gray-400 hover:text-white transition-colors ${showSettings ? 'text-primary' : ''}`} title="Settings">
                     <Settings size={18} />
@@ -264,20 +235,11 @@ export default function SwapPage() {
               </div>
             </div>
 
-            {isPriceExpired && (
-              <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-2xl flex items-center justify-between gap-2 text-xs text-red-400">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle size={16} className="flex-shrink-0" />
-                  <span>Price expired. Click 'Accept Updated Rate' to continue.</span>
-                </div>
-              </div>
-            )}
-
             {/* Pay Section */}
             <div className="bg-black/40 border border-white/5 rounded-2xl p-4 focus-within:border-primary/50 transition-colors mb-2">
-              <div className="text-sm text-gray-400 mb-2 font-medium flex justify-between">
+              <div className="text-sm text-gray-400 mb-2 font-medium flex justify-between items-center">
                 <span>{t('youPay')}</span>
-                <span>Balance: {formatCurrency(isConnected && payAsset.isBase ? balance : 0)}</span>
+                {getPayBalanceDisplay()}
               </div>
               <div className="flex justify-between items-center">
                 <input 
@@ -360,38 +322,34 @@ export default function SwapPage() {
                 </div>
                 <div className="flex justify-between text-gray-400">
                   <span>Network Fee</span>
-                  <span className="text-green-400 font-bold flex items-center gap-1"><Zap size={12}/> Free via Nado</span>
+                  <span className="text-green-400 font-bold flex items-center gap-1"><Zap size={12}/> Low Latency via Neotradio</span>
                 </div>
               </div>
             )}
 
             <button 
               onClick={handleSwap}
-              disabled={(!isConnected && false) || isSwapping}
+              disabled={isSwapping}
               className={`w-full font-bold py-4 rounded-2xl transition-all duration-300 shadow-lg text-lg flex items-center justify-center gap-2 ${
-                isPriceExpired
-                  ? 'bg-yellow-500 text-background hover:bg-yellow-400 shadow-[0_0_20px_rgba(234,179,8,0.4)] cursor-pointer'
-                  : !isConnected 
-                    ? 'bg-primary/20 text-primary hover:bg-primary/30' 
-                    : numPayAmount <= 0 
-                      ? 'bg-white/5 text-gray-500 cursor-not-allowed'
-                      : priceImpact > selectedSlippage
-                        ? 'bg-red-500/20 text-red-500 cursor-not-allowed'
-                        : 'bg-primary text-background hover:bg-primary/80 shadow-[0_0_20px_rgba(0,240,255,0.3)]'
+                !isConnected 
+                  ? 'bg-primary text-background hover:bg-primary/90 shadow-[0_0_20px_rgba(0,240,255,0.4)] cursor-pointer' 
+                  : numPayAmount <= 0 
+                    ? 'bg-white/5 text-gray-500 cursor-not-allowed'
+                    : priceImpact > selectedSlippage
+                      ? 'bg-red-500/20 text-red-500 cursor-not-allowed'
+                      : 'bg-primary text-background hover:bg-primary/80 shadow-[0_0_20px_rgba(0,240,255,0.3)]'
               }`}
             >
               {isSwapping ? (
                 <>
                   <RefreshCw size={18} className="animate-spin" />
-                  Executing on Nado...
-                </>
-              ) : isPriceExpired ? (
-                <>
-                  <RefreshCw size={18} />
-                  Accept Updated Rate
+                  Executing Swap...
                 </>
               ) : !isConnected ? (
-                t('connect')
+                <>
+                  <Wallet size={18} />
+                  Connect Wallet to Swap
+                </>
               ) : numPayAmount <= 0 ? (
                 'Enter an amount'
               ) : priceImpact > selectedSlippage ? (
