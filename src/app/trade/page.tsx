@@ -36,6 +36,7 @@ interface MarketConfig {
   pythId: string;
   binanceSymbol: string;
   decimals: number;
+  initialPrice: number;
 }
 
 const MARKETS: MarketConfig[] = [
@@ -44,21 +45,24 @@ const MARKETS: MarketConfig[] = [
     name: 'SOL-PERP',
     pythId: '0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d',
     binanceSymbol: 'SOLUSDT',
-    decimals: 2
+    decimals: 2,
+    initialPrice: 200.0,
   },
   {
     id: 'BTC-PERP',
     name: 'BTC-PERP',
     pythId: '0xe62df6c8b4a85f16b255383b75c465b5c0fd4e434e173beedce772c14309fb16',
     binanceSymbol: 'BTCUSDT',
-    decimals: 1
+    decimals: 1,
+    initialPrice: 95000.0,
   },
   {
     id: 'ETH-PERP',
     name: 'ETH-PERP',
     pythId: '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0aec',
     binanceSymbol: 'ETHUSDT',
-    decimals: 2
+    decimals: 2,
+    initialPrice: 3400.0,
   }
 ];
 
@@ -74,7 +78,7 @@ export default function ProTradePage() {
 
   // Market State
   const [activeMarket, setActiveMarket] = useState<MarketConfig>(MARKETS[0]);
-  const [price, setPrice] = useState<number>(145.5); // Fallback price
+  const [price, setPrice] = useState<number>(MARKETS[0].initialPrice);
   const [chartResolution, setChartResolution] = useState<'1m' | '5m' | '15m' | '1H' | '4H' | '1D'>('1H');
   const [tickerStats, setTickerStats] = useState({
     change24h: '+0.00',
@@ -371,6 +375,24 @@ export default function ProTradePage() {
         }
       }
     };
+
+    // 0. Instant 0ms fetch from Binance 24h Ticker for true live price
+    fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${activeMarket.binanceSymbol}`)
+      .then((res) => res.json())
+      .then((ticker) => {
+        if (!isMounted || !ticker || !ticker.lastPrice) return;
+        const livePrice = parseFloat(ticker.lastPrice);
+        if (livePrice > 0) {
+          applyPriceUpdate(livePrice);
+          setTickerStats({
+            change24h: parseFloat(ticker.priceChangePercent).toFixed(2),
+            high24h: parseFloat(ticker.highPrice),
+            low24h: parseFloat(ticker.lowPrice),
+            volume24h: parseFloat(ticker.volume).toLocaleString(undefined, { maximumFractionDigits: 0 }),
+          });
+        }
+      })
+      .catch(() => {});
 
     // 2. Try Connecting to Live Binance WebSocket
     try {
