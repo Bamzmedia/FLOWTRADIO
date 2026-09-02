@@ -227,8 +227,21 @@ export default function ProTradePage() {
     return { price: p > 0 ? p : price * 0.9995, size: s > 0 ? Math.round(s * 1000) / 1000 : 1500, total: Math.round(accumBidTotal * 1000) / 1000 };
   });
 
-  const orderBookAsks = formattedAsks.length > 0 ? formattedAsks : apiOrderBook.asks;
-  const orderBookBids = formattedBids.length > 0 ? formattedBids : apiOrderBook.bids;
+  const orderBookAsks = formattedAsks.length > 0 ? formattedAsks : (apiOrderBook.asks.length > 0 ? apiOrderBook.asks : [
+    { price: Math.round(price * 1.0020 * 100) / 100, size: 14.5, total: 45.0 },
+    { price: Math.round(price * 1.0015 * 100) / 100, size: 8.2, total: 30.5 },
+    { price: Math.round(price * 1.0010 * 100) / 100, size: 12.0, total: 22.3 },
+    { price: Math.round(price * 1.0005 * 100) / 100, size: 4.5, total: 10.3 },
+    { price: Math.round(price * 1.0002 * 100) / 100, size: 5.8, total: 5.8 },
+  ]);
+
+  const orderBookBids = formattedBids.length > 0 ? formattedBids : (apiOrderBook.bids.length > 0 ? apiOrderBook.bids : [
+    { price: Math.round(price * 0.9998 * 100) / 100, size: 8.5, total: 8.5 },
+    { price: Math.round(price * 0.9995 * 100) / 100, size: 15.2, total: 23.7 },
+    { price: Math.round(price * 0.9990 * 100) / 100, size: 4.1, total: 27.8 },
+    { price: Math.round(price * 0.9985 * 100) / 100, size: 18.0, total: 45.8 },
+    { price: Math.round(price * 0.9980 * 100) / 100, size: 9.0, total: 54.8 },
+  ]);
 
   // Real-time Recent Trades feed
   const liveTradeList = liveTradesMap[activeProductId] || [];
@@ -376,7 +389,16 @@ export default function ProTradePage() {
       }
     };
 
-    // 0. Instant 0ms fetch from Binance 24h Ticker for true live price
+    // 0. Instant 0ms fetch from Binance Ticker & Price for true live price
+    fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${activeMarket.binanceSymbol}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!isMounted || !data || !data.price) return;
+        const livePrice = parseFloat(data.price);
+        if (livePrice > 0) applyPriceUpdate(livePrice);
+      })
+      .catch(() => {});
+
     fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${activeMarket.binanceSymbol}`)
       .then((res) => res.json())
       .then((ticker) => {
@@ -510,8 +532,7 @@ export default function ProTradePage() {
     seriesRef.current = candlestickSeries;
 
     // Instant zero-delay initial load on mount
-    const defaultPrices: Record<string, number> = { 'SOL-PERP': 148.5, 'BTC-PERP': 86500.0, 'ETH-PERP': 2680.0 };
-    const basePrice = price > 0 ? price : (defaultPrices[activeMarket.id] || 100);
+    const basePrice = price > 0 ? price : activeMarket.initialPrice;
     const instantData = generateInstantCandles(chartResolution, basePrice);
     candlestickSeries.setData(instantData);
     currentCandleRef.current = { ...instantData[instantData.length - 1] };
@@ -537,8 +558,7 @@ export default function ProTradePage() {
     if (!seriesRef.current || !chartRef.current) return;
     
     let isMounted = true;
-    const defaultPrices: Record<string, number> = { 'SOL-PERP': 148.5, 'BTC-PERP': 86500.0, 'ETH-PERP': 2680.0 };
-    const basePrice = price > 0 ? price : (defaultPrices[activeMarket.id] || 100);
+    const basePrice = price > 0 ? price : activeMarket.initialPrice;
 
     // 1. Instant 0ms render immediately
     const instantData = generateInstantCandles(chartResolution, basePrice);
@@ -793,7 +813,10 @@ export default function ProTradePage() {
               value={activeMarket.id} 
               onChange={(e) => {
                 const selected = MARKETS.find(m => m.id === e.target.value);
-                if (selected) setActiveMarket(selected);
+                if (selected) {
+                  setActiveMarket(selected);
+                  setPrice(selected.initialPrice);
+                }
               }}
               className="bg-transparent font-bold text-lg outline-none border-b border-dashed border-primary/50 cursor-pointer text-white pr-2 hover:border-primary transition-all"
             >
