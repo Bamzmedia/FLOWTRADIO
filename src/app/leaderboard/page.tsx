@@ -77,6 +77,16 @@ export default function LeaderboardPage() {
             <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mb-4"></div>
             Loading global rankings...
           </div>
+        ) : leaderboardData.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 glass-panel rounded-3xl mt-10">
+            <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-6">
+              <Trophy size={40} className="text-primary opacity-50" />
+            </div>
+            <h2 className="text-2xl font-bold mb-2">No Traders Ranked Yet</h2>
+            <p className="text-gray-400 text-center max-w-md">
+              The leaderboard is currently empty. Be the first to start trading and claim the #1 spot on NEOTRADIO!
+            </p>
+          </div>
         ) : (
           <>
             {/* Podium for Top 3 */}

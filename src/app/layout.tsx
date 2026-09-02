@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "NEOTRADIO | Next-Gen Perpetuals",
-  description: "Trade crypto perpetuals with zero gas fees and deep liquidity.",
+  description: "Trade crypto perpetuals with ultra-low latency and deep liquidity.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,

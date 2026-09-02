@@ -22,10 +22,9 @@ export async function GET() {
     }
     throw new Error('API not available yet');
   } catch (error) {
-    console.log("Nado API not reachable, falling back to mock data");
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    console.log("Nado API not reachable, falling back to empty data");
     return NextResponse.json({
-      data: MOCK_LEADERBOARD,
+      data: [],
       timestamp: new Date().toISOString(),
       isFallback: true
     });

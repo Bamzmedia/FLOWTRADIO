@@ -52,12 +52,12 @@ export default function LandingPage() {
           <h1 className="text-5xl md:text-7xl lg:text-8xl font-extrabold tracking-tighter mb-8 leading-tight">
             Trade the future <br/>
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary via-secondary to-accent animate-gradient-x">
-              with FLOWTRADIO
+              with NEOTRADIO
             </span>
           </h1>
 
           <p className="text-lg md:text-xl text-gray-400 max-w-2xl mb-12 font-medium leading-relaxed">
-            The most advanced decentralized perpetual exchange. Access up to 100x leverage on Crypto, FX, and Commodities with zero gas fees and sub-second execution latency.
+            The most advanced decentralized perpetual exchange. Access up to 100x leverage on Crypto, FX, and Commodities with sub-second execution latency.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center gap-6">
@@ -102,8 +102,8 @@ export default function LandingPage() {
               </div>
 
               <div className="flex flex-col items-center justify-center text-center">
-                <div className="text-4xl font-black text-white mb-2 tracking-tight">Zero</div>
-                <div className="text-sm font-semibold text-gray-400 tracking-widest uppercase">Gas Fees</div>
+                <div className="text-4xl font-black text-white mb-2 tracking-tight">100x</div>
+                <div className="text-sm font-semibold text-gray-400 tracking-widest uppercase">Max Leverage</div>
               </div>
             </div>
           </div>
@@ -166,7 +166,7 @@ export default function LandingPage() {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-primary to-secondary flex items-center justify-center shadow-lg shadow-primary/20">
               <Activity size={18} className="text-background" />
             </div>
-            <span className="font-extrabold text-xl tracking-tight">FLOWTRADIO</span>
+            <span className="font-extrabold text-xl tracking-tight">NEOTRADIO</span>
           </div>
           
           <div className="flex gap-6 text-sm font-semibold text-gray-500">
@@ -177,7 +177,7 @@ export default function LandingPage() {
           </div>
 
           <div className="text-sm text-gray-600">
-            &copy; 2026 Flowtradio. All rights reserved.
+            &copy; 2026 Neotradio. All rights reserved.
           </div>
         </div>
       </footer>
