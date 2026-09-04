@@ -35,7 +35,6 @@ export default function Navbar() {
           <div className="hidden lg:flex gap-6 text-sm text-gray-400 font-medium">
             <Link href="/" className="hover:text-primary transition-colors">{t('dashboard')}</Link>
             <Link href="/trade" className="hover:text-primary transition-colors">{t('trade')}</Link>
-            <Link href="/swap" className="hover:text-primary transition-colors">{t('swap')}</Link>
             <Link href="/markets" className="hover:text-primary transition-colors">{t('markets')}</Link>
             <Link href="/earn" className="hover:text-primary transition-colors">{t('earn')}</Link>
             <Link href="/leaderboard" className="hover:text-primary transition-colors">Leaderboard</Link>
@@ -117,7 +116,6 @@ export default function Navbar() {
           <div className="flex flex-col gap-6 text-lg font-bold">
             <Link href="/" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-2 rounded-xl hover:bg-white/5">{t('dashboard')}</Link>
             <Link href="/trade" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-2 rounded-xl hover:bg-white/5">{t('trade')}</Link>
-            <Link href="/swap" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-2 rounded-xl hover:bg-white/5">{t('swap')}</Link>
             <Link href="/markets" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-2 rounded-xl hover:bg-white/5">{t('markets')}</Link>
             <Link href="/earn" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-2 rounded-xl hover:bg-white/5">{t('earn')}</Link>
             <Link href="/leaderboard" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-2 rounded-xl hover:bg-white/5">Leaderboard</Link>

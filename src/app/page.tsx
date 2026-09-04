@@ -68,13 +68,6 @@ export default function LandingPage() {
               Start Trading 
               <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
             </Link>
-            
-            <Link 
-              href="/swap"
-              className="px-8 py-4 bg-white/5 border border-white/10 text-white font-bold text-lg rounded-full hover:bg-white/10 transition-all flex items-center gap-2"
-            >
-              Spot Swap
-            </Link>
           </div>
         </section>
 
@@ -171,7 +164,6 @@ export default function LandingPage() {
           
           <div className="flex gap-6 text-sm font-semibold text-gray-500">
             <Link href="/trade" className="hover:text-primary transition-colors">Pro Trade</Link>
-            <Link href="/swap" className="hover:text-primary transition-colors">Swap</Link>
             <Link href="/leaderboard" className="hover:text-primary transition-colors">Leaderboard</Link>
             <Link href="#" className="hover:text-primary transition-colors">Documentation</Link>
           </div>
