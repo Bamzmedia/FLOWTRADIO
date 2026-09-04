@@ -659,11 +659,13 @@ export default function ProTradePage() {
         try {
           const provider = new ethers.BrowserProvider(walletProvider as any);
           const signer = await provider.getSigner();
-          
+          const activeNetwork = await provider.getNetwork();
+          const chainId = Number(activeNetwork.chainId) || 57073; // Ink Chain Mainnet (57073) or connected Ink network
+
           const domain = {
-            name: 'Nado',
+            name: 'Neotradio',
             version: '1',
-            chainId: 42161, // Arbitrum One
+            chainId: chainId,
             verifyingContract: '0x0000000000000000000000000000000000000000'
           };
 

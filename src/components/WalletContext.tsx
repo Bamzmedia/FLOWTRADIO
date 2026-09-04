@@ -3,9 +3,9 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { useAppKit, useAppKitAccount, useAppKitNetwork, useAppKitProvider, useDisconnect } from '@reown/appkit/react';
-import { mainnet, arbitrum, polygon } from '@reown/appkit/networks';
+import { ink, inkSepolia, mainnet, arbitrum, polygon } from '@reown/appkit/networks';
 
-export type Network = 'Ethereum' | 'Arbitrum' | 'Solana' | 'Polygon';
+export type Network = 'Ink' | 'Ink Sepolia' | 'Arbitrum' | 'Ethereum' | 'Polygon' | 'Solana';
 
 export interface Transaction {
   id: string;
@@ -51,7 +51,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const { walletProvider } = useAppKitProvider('eip155');
 
   const [isDemoConnected, setIsDemoConnected] = useState(false);
-  const [localNetwork, setLocalNetwork] = useState<Network>('Arbitrum');
+  const [localNetwork, setLocalNetwork] = useState<Network>('Ink');
   const [balance, setBalance] = useState(0);
   const [transactions, setTransactions] = useState<Transaction[]>(mockTransactions);
   const [stakedBalances, setStakedBalances] = useState<Record<string, number>>({
@@ -74,10 +74,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const getMappedNetwork = (caipNetName?: string, caipNetId?: string): Network => {
     const searchString = `${caipNetName || ''} ${caipNetId || ''}`.toLowerCase();
+    if (searchString.includes('ink sepolia') || searchString.includes('763373')) return 'Ink Sepolia';
+    if (searchString.includes('ink') || searchString.includes('57073')) return 'Ink';
     if (searchString.includes('arbitrum') || searchString.includes('42161')) return 'Arbitrum';
     if (searchString.includes('polygon') || searchString.includes('matic') || searchString.includes('137')) return 'Polygon';
     if (searchString.includes('ethereum') || searchString.includes('mainnet') || searchString.includes('eip155:1')) return 'Ethereum';
-    return 'Arbitrum';
+    return 'Ink';
   };
 
   const network = appKitIsConnected && caipNetwork
@@ -167,7 +169,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const setNetwork = async (selectedNetwork: Network) => {
     setLocalNetwork(selectedNetwork);
     if (appKitIsConnected) {
-      let targetNetwork: any = arbitrum;
+      let targetNetwork: any = ink;
+      if (selectedNetwork === 'Ink Sepolia') targetNetwork = inkSepolia;
+      if (selectedNetwork === 'Arbitrum') targetNetwork = arbitrum;
       if (selectedNetwork === 'Ethereum') targetNetwork = mainnet;
       if (selectedNetwork === 'Polygon') targetNetwork = polygon;
       
