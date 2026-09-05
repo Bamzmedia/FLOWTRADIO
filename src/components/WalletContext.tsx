@@ -3,9 +3,9 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { useAppKit, useAppKitAccount, useAppKitNetwork, useAppKitProvider, useDisconnect } from '@reown/appkit/react';
-import { ink, inkSepolia, mainnet, arbitrum, polygon } from '@reown/appkit/networks';
+import { ink, inkSepolia } from '@reown/appkit/networks';
 
-export type Network = 'Ink' | 'Ink Sepolia' | 'Arbitrum' | 'Ethereum' | 'Polygon' | 'Solana';
+export type Network = 'Ink' | 'Ink Sepolia';
 
 export interface Transaction {
   id: string;
@@ -36,9 +36,9 @@ interface WalletState {
 }
 
 const mockTransactions: Transaction[] = [
-  { id: 'tx-1', type: 'Deposit', amount: 5000, asset: 'USDC', date: new Date(Date.now() - 86400000 * 2), status: 'Completed', network: 'Arbitrum' },
-  { id: 'tx-2', type: 'Trade', amount: -1500, asset: 'USDC', date: new Date(Date.now() - 86400000 * 1), status: 'Completed', network: 'Arbitrum' },
-  { id: 'tx-3', type: 'Withdraw', amount: 200, asset: 'USDT', date: new Date(Date.now() - 3600000 * 5), status: 'Completed', network: 'Ethereum' },
+  { id: 'tx-1', type: 'Deposit', amount: 5000, asset: 'USDC', date: new Date(Date.now() - 86400000 * 2), status: 'Completed', network: 'Ink' },
+  { id: 'tx-2', type: 'Trade', amount: -1500, asset: 'USDC', date: new Date(Date.now() - 86400000 * 1), status: 'Completed', network: 'Ink' },
+  { id: 'tx-3', type: 'Withdraw', amount: 200, asset: 'USDT', date: new Date(Date.now() - 3600000 * 5), status: 'Completed', network: 'Ink' },
 ];
 
 const WalletContext = createContext<WalletState | undefined>(undefined);
@@ -74,11 +74,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const getMappedNetwork = (caipNetName?: string, caipNetId?: string): Network => {
     const searchString = `${caipNetName || ''} ${caipNetId || ''}`.toLowerCase();
-    if (searchString.includes('ink sepolia') || searchString.includes('763373')) return 'Ink Sepolia';
-    if (searchString.includes('ink') || searchString.includes('57073')) return 'Ink';
-    if (searchString.includes('arbitrum') || searchString.includes('42161')) return 'Arbitrum';
-    if (searchString.includes('polygon') || searchString.includes('matic') || searchString.includes('137')) return 'Polygon';
-    if (searchString.includes('ethereum') || searchString.includes('mainnet') || searchString.includes('eip155:1')) return 'Ethereum';
+    if (searchString.includes('sepolia') || searchString.includes('763373')) return 'Ink Sepolia';
     return 'Ink';
   };
 
@@ -169,15 +165,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const setNetwork = async (selectedNetwork: Network) => {
     setLocalNetwork(selectedNetwork);
     if (appKitIsConnected) {
-      let targetNetwork: any = ink;
-      if (selectedNetwork === 'Ink Sepolia') targetNetwork = inkSepolia;
-      if (selectedNetwork === 'Arbitrum') targetNetwork = arbitrum;
-      if (selectedNetwork === 'Ethereum') targetNetwork = mainnet;
-      if (selectedNetwork === 'Polygon') targetNetwork = polygon;
-      
+      const targetNetwork = selectedNetwork === 'Ink Sepolia' ? inkSepolia : ink;
       try {
         if (switchNetwork) {
-          await switchNetwork(targetNetwork);
+          await switchNetwork(targetNetwork as any);
         }
       } catch (err) {
         console.error("Failed to switch network in AppKit", err);

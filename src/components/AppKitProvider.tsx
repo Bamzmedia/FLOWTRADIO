@@ -2,13 +2,13 @@
 
 import { createAppKit } from '@reown/appkit/react';
 import { EthersAdapter } from '@reown/appkit-adapter-ethers';
-import { ink, inkSepolia, mainnet, arbitrum, polygon } from '@reown/appkit/networks';
+import { ink, inkSepolia } from '@reown/appkit/networks';
 import { ReactNode } from 'react';
 
 // Get projectId from environment variables
 const projectId = process.env.NEXT_PUBLIC_REOWN_PROJECT_ID || '85c6dfbf513364f7b6b15801c40212f4'; // Fallback project ID for initial testing
 
-const networks: [any, ...any[]] = [ink, inkSepolia, arbitrum, mainnet, polygon];
+const networks: [any, ...any[]] = [ink, inkSepolia];
 
 // Create AppKit instance
 createAppKit({

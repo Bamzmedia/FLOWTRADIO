@@ -133,7 +133,7 @@ export default function Navbar() {
             <div className="mb-6">
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">1. Select Network</label>
               <div className="grid grid-cols-2 gap-3">
-                {['Ink', 'Ink Sepolia', 'Arbitrum', 'Ethereum', 'Solana', 'Polygon'].map((n) => (
+                {['Ink', 'Ink Sepolia'].map((n) => (
                   <button 
                     key={n}
                     onClick={() => setNetwork(n as Network)}
