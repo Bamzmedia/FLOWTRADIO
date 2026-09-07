@@ -132,14 +132,15 @@ export default function Navbar() {
             
             <div className="mb-6">
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">1. Select Network</label>
-              <div className="grid grid-cols-2 gap-3">
-                {['Ink', 'Ink Sepolia'].map((n) => (
+              <div className="grid grid-cols-1 gap-3">
+                {['Ink'].map((n) => (
                   <button 
                     key={n}
                     onClick={() => setNetwork(n as Network)}
-                    className={`py-2 px-3 rounded-xl text-sm font-bold border transition-all ${network === n ? 'bg-primary/10 border-primary text-primary' : 'bg-black/40 border-white/5 text-gray-300 hover:border-white/20'}`}
+                    className={`py-2 px-3 rounded-xl text-sm font-bold border transition-all flex items-center justify-between ${network === n ? 'bg-primary/10 border-primary text-primary' : 'bg-black/40 border-white/5 text-gray-300 hover:border-white/20'}`}
                   >
-                    {n}
+                    <span>{n} Mainnet</span>
+                    <span className="text-xs bg-primary/20 text-primary px-2 py-0.5 rounded-full">Chain ID 57073</span>
                   </button>
                 ))}
               </div>

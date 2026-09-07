@@ -3,9 +3,9 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { useAppKit, useAppKitAccount, useAppKitNetwork, useAppKitProvider, useDisconnect } from '@reown/appkit/react';
-import { ink, inkSepolia } from '@reown/appkit/networks';
+import { ink } from '@reown/appkit/networks';
 
-export type Network = 'Ink' | 'Ink Sepolia';
+export type Network = 'Ink';
 
 export interface Transaction {
   id: string;
@@ -72,9 +72,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     ? `${appKitAddress.substring(0, 6)}...${appKitAddress.substring(appKitAddress.length - 4)}`
     : (isDemoConnected ? "0x71C...392b" : null);
 
-  const getMappedNetwork = (caipNetName?: string, caipNetId?: string): Network => {
-    const searchString = `${caipNetName || ''} ${caipNetId || ''}`.toLowerCase();
-    if (searchString.includes('sepolia') || searchString.includes('763373')) return 'Ink Sepolia';
+  const getMappedNetwork = (_caipNetName?: string, _caipNetId?: string): Network => {
     return 'Ink';
   };
 
@@ -165,10 +163,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const setNetwork = async (selectedNetwork: Network) => {
     setLocalNetwork(selectedNetwork);
     if (appKitIsConnected) {
-      const targetNetwork = selectedNetwork === 'Ink Sepolia' ? inkSepolia : ink;
       try {
         if (switchNetwork) {
-          await switchNetwork(targetNetwork as any);
+          await switchNetwork(ink as any);
         }
       } catch (err) {
         console.error("Failed to switch network in AppKit", err);
