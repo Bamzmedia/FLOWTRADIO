@@ -124,24 +124,34 @@ export function useNadoUserStream() {
           const signer = await provider.getSigner();
 
           const chainId = parseInt(process.env.NEXT_PUBLIC_NADO_CHAIN_ID || '57073', 10);
-          const verifyingContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT || '0x0000000000000000000000000000000000000000';
+          const contractAddress = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT;
 
-          const domain = {
+          // Fix 1: Omit verifyingContract if unset or zero address to prevent MetaMask "Null: 0x0..." warning
+          const domain: {
+            name: string;
+            version: string;
+            chainId: number;
+            verifyingContract?: string;
+          } = {
             name: 'Nado',
             version: '0.1.0',
             chainId,
-            verifyingContract,
           };
 
+          if (contractAddress && contractAddress !== ethers.ZeroAddress && ethers.isAddress(contractAddress)) {
+            domain.verifyingContract = contractAddress;
+          }
+
+          // Fix 2: Render standard 42-char EVM address instead of raw 66-char bytes32 hex
           const types = {
             StreamAuthentication: [
-              { name: 'sender', type: 'bytes32' },
+              { name: 'sender', type: 'address' },
               { name: 'expiration', type: 'uint64' },
             ],
           };
 
           const value = {
-            sender: senderBytes32,
+            sender: ethers.getAddress(address),
             expiration: expirationMs,
           };
 

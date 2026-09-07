@@ -658,12 +658,21 @@ export default function ProTradePage() {
           const activeNetwork = await provider.getNetwork();
           const chainId = Number(activeNetwork.chainId) || 57073; // Ink Chain Mainnet (57073) or connected Ink network
 
-          const domain = {
+          const domain: {
+            name: string;
+            version: string;
+            chainId: number;
+            verifyingContract?: string;
+          } = {
             name: 'Neotradio',
             version: '1',
             chainId: chainId,
-            verifyingContract: '0x0000000000000000000000000000000000000000'
           };
+
+          const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT;
+          if (endpointContract && endpointContract !== ethers.ZeroAddress && ethers.isAddress(endpointContract)) {
+            domain.verifyingContract = endpointContract;
+          }
 
           const types = {
             Order: [
