@@ -304,29 +304,30 @@ export default function ProTradePage() {
 
   const currentCandleRef = useRef<{ time: number; open: number; high: number; low: number; close: number } | null>(null);
 
-  // Helper: Fast Instant Candle Generator (0ms delay)
+  // Helper: Fast Instant Candle Generator (starts from current active session)
   const generateInstantCandles = (interval: string, basePrice: number) => {
     const bars = [];
     const step = interval === '1m' ? 60 : interval === '5m' ? 300 : interval === '15m' ? 900 : interval === '1H' ? 3600 : interval === '4H' ? 14400 : 86400;
     const nowRounded = Math.floor(Math.floor(Date.now() / 1000) / step) * step;
-    let curr = basePrice * 0.985;
-    for (let i = 90; i >= 0; i--) {
+    let curr = basePrice * 0.995;
+    // Limit to recent session bars (30 bars) so time starts from active live epoch
+    for (let i = 30; i >= 0; i--) {
       const time = (nowRounded - (i * step)) as any;
       const open = curr;
-      const change = (Math.sin(i * 0.4) * 0.003 + (Math.random() - 0.48) * 0.006) * basePrice;
+      const change = (Math.sin(i * 0.4) * 0.002 + (Math.random() - 0.48) * 0.004) * basePrice;
       const close = Math.max(0.01, open + change);
-      const high = Math.max(open, close) + Math.random() * (basePrice * 0.003);
-      const low = Math.min(open, close) - Math.random() * (basePrice * 0.003);
+      const high = Math.max(open, close) + Math.random() * (basePrice * 0.002);
+      const low = Math.min(open, close) - Math.random() * (basePrice * 0.002);
       bars.push({ time, open, high, low, close });
       curr = close;
     }
     return bars;
   };
 
-  // Helper: Fetch Binance Klines with strict 1.2s timeout
+  // Helper: Fetch Recent Klines aligned with active session
   const fetchHistoricalData = async (symbol: string, interval: string, basePrice: number) => {
     const binanceInterval = interval.toLowerCase();
-    const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${binanceInterval}&limit=90`;
+    const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${binanceInterval}&limit=35`;
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 1200);
@@ -343,7 +344,7 @@ export default function ProTradePage() {
         }));
       }
     } catch {
-      // Fallback to server route or instant generator
+      // Fallback to instant generator
     }
     return null;
   };
