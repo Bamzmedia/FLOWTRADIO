@@ -7,7 +7,6 @@ import { useWallet } from '@/components/WalletContext';
 import { Coins, Wallet, ArrowRight, ShieldCheck, TrendingUp, Pickaxe, Flame } from 'lucide-react';
 
 const POOLS = [
-  { id: 'nado', asset: 'NADO', name: 'Nado Token', apy: 25.4, tvl: 4500000, color: 'from-primary to-blue-500' },
   { id: 'usdc', asset: 'USDC', name: 'USD Coin', apy: 8.2, tvl: 12500000, color: 'from-blue-500 to-indigo-600' },
   { id: 'eth', asset: 'ETH', name: 'Ethereum', apy: 4.5, tvl: 38000000, color: 'from-purple-500 to-pink-500' },
 ];
@@ -16,7 +15,7 @@ export default function EarnPage() {
   const { t, formatCurrency } = useLocalization();
   const { isConnected, balance, tokenBalances, stakedBalances, updateStakedBalance, addTransaction, network } = useWallet();
 
-  const [activePool, setActivePool] = useState(POOLS[1]);
+  const [activePool, setActivePool] = useState(POOLS[0]);
   const [activeTab, setActiveTab] = useState<'stake' | 'unstake'>('stake');
   const [amount, setAmount] = useState('');
   const activeBalance = activePool.asset === 'USDC' ? balance : (tokenBalances[activePool.asset] || 0);

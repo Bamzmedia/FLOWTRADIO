@@ -50,12 +50,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [balance, setBalance] = useState(0);
   const [transactions, setTransactions] = useState<Transaction[]>(initialTransactions);
   const [stakedBalances, setStakedBalances] = useState<Record<string, number>>({
-    nado: 0,
     usdc: 0,
     eth: 0
   });
   const [tokenBalances, setTokenBalances] = useState<Record<string, number>>({
-    NADO: 0,
     ETH: 0,
   });
   const [isHydrated, setIsHydrated] = useState(false);

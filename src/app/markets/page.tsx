@@ -20,7 +20,6 @@ type Market = {
 };
 
 const INITIAL_MARKETS: Market[] = [
-  { id: 'nado', symbol: 'NADO', name: 'Nado Token', price: 2.45, change24h: 12.5, volume24h: 15400000, fundingRate: 0.01, oi: 5200000 },
   { id: 'btc', symbol: 'BTC', name: 'Bitcoin', price: 80450.00, change24h: 2.4, volume24h: 845000000, fundingRate: 0.005, oi: 154000000 },
   { id: 'eth', symbol: 'ETH', name: 'Ethereum', price: 2620.50, change24h: -1.2, volume24h: 420000000, fundingRate: -0.002, oi: 89000000 },
   { id: 'sol', symbol: 'SOL', name: 'Solana', price: 148.90, change24h: 8.5, volume24h: 156000000, fundingRate: 0.015, oi: 45000000 },
@@ -48,7 +47,7 @@ export default function MarketsPage() {
   
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<'all' | 'trending' | 'gainers' | 'losers' | 'watchlist'>('all');
-  const [favorites, setFavorites] = useState<string[]>(['BTC', 'NADO']);
+  const [favorites, setFavorites] = useState<string[]>(['BTC', 'ETH']);
 
   // Subscribe to live Nado WebSocket market feeds for SOL-PERP (1), BTC-PERP (2), ETH-PERP (4)
   const { trades: liveTrades } = useNadoMarketData([1, 2, 4]);
@@ -328,11 +327,6 @@ export default function MarketsPage() {
                           <div className="min-w-0">
                             <div className="font-bold text-white group-hover:text-primary transition-colors cursor-pointer flex items-center gap-1.5">
                               <span className="truncate">{market.symbol}</span>
-                              {market.symbol === 'NADO' && (
-                                <span className="text-[10px] bg-primary/20 text-primary border border-primary/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider flex-shrink-0">
-                                  Native
-                                </span>
-                              )}
                             </div>
                             <div className="text-gray-500 text-xs truncate">{market.name}</div>
                           </div>

@@ -139,14 +139,14 @@ const regionalData = {
     { asset: 'MATIC-PERP', change: 0.5 },
   ],
   ASIA: [
-    { asset: 'NADO-PERP', change: 12.4 },
+    { asset: 'SOL-PERP', change: 8.5 },
     { asset: 'ARB-PERP', change: 4.2 },
     { asset: 'DOGE-PERP', change: -8.5 },
   ],
   GLOBAL: [
     { asset: 'BTC-PERP', change: 2.4 },
     { asset: 'ETH-PERP', change: -1.2 },
-    { asset: 'NADO-PERP', change: 12.4 },
+    { asset: 'SOL-PERP', change: 8.5 },
   ]
 };
 
