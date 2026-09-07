@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Globe, Wallet, ChevronDown, User, LogOut, Settings, Menu, X } from 'lucide-react';
 import { useLocalization } from '@/components/LocalizationContext';
@@ -11,10 +11,15 @@ export default function Navbar() {
   const { t, language, setLanguage, currency, setCurrency, region, setRegion } = useLocalization();
   const { isConnected, address, network, connect, disconnect, setNetwork } = useWallet();
   
+  const [mounted, setMounted] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const handleConnect = (selectedNetwork: Network) => {
     connect(selectedNetwork);
@@ -53,7 +58,15 @@ export default function Navbar() {
             <SettingsModal onClose={() => setShowSettings(false)} />
           )}
 
-          {isConnected ? (
+          {!mounted ? (
+            <button 
+              disabled
+              className="flex items-center gap-2 bg-primary/30 text-background/80 px-5 py-2 rounded-full font-bold transition-all cursor-wait opacity-80"
+            >
+              <Wallet size={18} />
+              <span className="hidden sm:inline">Connect Wallet</span>
+            </button>
+          ) : isConnected ? (
             <div className="relative">
               <button 
                 onClick={() => setShowProfileMenu(!showProfileMenu)}
