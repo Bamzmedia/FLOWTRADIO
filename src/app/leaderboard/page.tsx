@@ -6,7 +6,6 @@ import { Trophy, TrendingUp, TrendingDown, Users, Search, Medal, Target } from '
 import { useLocalization } from '@/components/LocalizationContext';
 import CopyTradeModal from '@/components/CopyTradeModal';
 
-// MOCK_LEADERBOARD moved to API
 type Trader = {
   rank: number;
   name: string;

@@ -4,11 +4,11 @@ import { NadoEnv, NadoOrder, PlaceOrderPayload, SubaccountState, OHLCVBar, PastF
 export function getNadoEnv(): NadoEnv {
   if (typeof process !== 'undefined' && process.env) {
     const env = process.env.NEXT_PUBLIC_NADO_ENV;
-    if (env === 'mainnet') {
-      return 'mainnet';
+    if (env === 'testnet') {
+      return 'testnet';
     }
   }
-  return 'testnet';
+  return 'mainnet';
 }
 
 // Retrieve dynamic REST & WebSocket URLs based on unified endpoints

@@ -330,7 +330,7 @@ export default function MarketsPage() {
                               <span className="truncate">{market.symbol}</span>
                               {market.symbol === 'NADO' && (
                                 <span className="text-[10px] bg-primary/20 text-primary border border-primary/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider flex-shrink-0">
-                                  Testnet
+                                  Native
                                 </span>
                               )}
                             </div>
@@ -365,7 +365,7 @@ export default function MarketsPage() {
                       </td>
 
                       <td className="py-4 px-4 text-right">
-                        <Link href="/">
+                        <Link href="/trade">
                           <button className="glass-panel bg-white/5 hover:bg-primary hover:text-background text-primary px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1 ml-auto">
                             Trade <ArrowRight size={12} />
                           </button>

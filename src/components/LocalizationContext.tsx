@@ -40,7 +40,7 @@ interface LocalizationState {
   getRegionalTrending: () => { asset: string; change: number }[];
 }
 
-// Simple translation dictionary for mock purposes
+// Internationalization translation dictionary
 const translations = {
   en: {
     dashboard: 'Dashboard',
@@ -50,7 +50,7 @@ const translations = {
     portfolio: 'Total Portfolio Value',
     pnl: 'Total PnL',
     volume: '24h Trading Volume',
-    swap: 'Quick Swap',
+    swap: 'Trade',
     positions: 'Open Positions',
     orders: 'Orders',
     activity: 'Recent Activity',
@@ -62,7 +62,7 @@ const translations = {
     evening: "Good evening",
     trending_in: "Trending in",
     trending_global: "Global Trending",
-    swapTitle: 'Quick Swap',
+    swapTitle: 'Trade',
     swapSubtitle: 'Instantly exchange tokens with minimal slippage.',
     youPay: 'You Pay',
     youReceive: 'You Receive',

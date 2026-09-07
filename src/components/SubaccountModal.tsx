@@ -61,7 +61,7 @@ export default function SubaccountModal({
           type: 'Deposit',
           amount: -numAmount,
           asset: 'USDC',
-          network: 'Nado L2',
+          network: 'Ink',
         });
         setFeedback({
           type: 'success',
@@ -72,7 +72,7 @@ export default function SubaccountModal({
           type: 'Withdraw',
           amount: numAmount,
           asset: 'USDC',
-          network: 'Nado L2',
+          network: 'Ink',
         });
         setFeedback({
           type: 'success',

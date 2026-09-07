@@ -68,7 +68,7 @@ export function useNadoUserStream() {
   const { isConnected: walletContextConnected, address: walletContextAddress } = useWallet();
   
   const isConnected = appKitConnected || walletContextConnected;
-  const address = appKitAddress || walletContextAddress || '0x71C...';
+  const address = appKitAddress || walletContextAddress || null;
   
   const ws = useNadoWebSocket();
   

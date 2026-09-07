@@ -27,7 +27,7 @@ interface WalletState {
   transactions: Transaction[];
   stakedBalances: Record<string, number>;
   tokenBalances: Record<string, number>;
-  connect: (network: Network, isDemo?: boolean) => void;
+  connect: (network?: Network) => void;
   disconnect: () => void;
   setNetwork: (network: Network) => void;
   addTransaction: (tx: Omit<Transaction, 'id' | 'date' | 'status'>) => void;
@@ -35,11 +35,7 @@ interface WalletState {
   updateTokenBalance: (tokenId: string, amount: number) => void;
 }
 
-const mockTransactions: Transaction[] = [
-  { id: 'tx-1', type: 'Deposit', amount: 5000, asset: 'USDC', date: new Date(Date.now() - 86400000 * 2), status: 'Completed', network: 'Ink' },
-  { id: 'tx-2', type: 'Trade', amount: -1500, asset: 'USDC', date: new Date(Date.now() - 86400000 * 1), status: 'Completed', network: 'Ink' },
-  { id: 'tx-3', type: 'Withdraw', amount: 200, asset: 'USDT', date: new Date(Date.now() - 3600000 * 5), status: 'Completed', network: 'Ink' },
-];
+const initialTransactions: Transaction[] = [];
 
 const WalletContext = createContext<WalletState | undefined>(undefined);
 
@@ -50,10 +46,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const { caipNetwork, switchNetwork } = useAppKitNetwork();
   const { walletProvider } = useAppKitProvider('eip155');
 
-  const [isDemoConnected, setIsDemoConnected] = useState(false);
   const [localNetwork, setLocalNetwork] = useState<Network>('Ink');
   const [balance, setBalance] = useState(0);
-  const [transactions, setTransactions] = useState<Transaction[]>(mockTransactions);
+  const [transactions, setTransactions] = useState<Transaction[]>(initialTransactions);
   const [stakedBalances, setStakedBalances] = useState<Record<string, number>>({
     nado: 0,
     usdc: 0,
@@ -66,11 +61,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [isHydrated, setIsHydrated] = useState(false);
 
   // Derived state
-  const isConnected = appKitIsConnected || isDemoConnected;
+  const isConnected = appKitIsConnected;
   
   const address = appKitAddress 
     ? `${appKitAddress.substring(0, 6)}...${appKitAddress.substring(appKitAddress.length - 4)}`
-    : (isDemoConnected ? "0x71C...392b" : null);
+    : null;
 
   const getMappedNetwork = (_caipNetName?: string, _caipNetId?: string): Network => {
     return 'Ink';
@@ -94,9 +89,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
       const savedTokens = localStorage.getItem('wallet_tokens');
       if (savedTokens) setTokenBalances(JSON.parse(savedTokens));
-      
-      const savedDemo = localStorage.getItem('wallet_is_demo');
-      if (savedDemo) setIsDemoConnected(savedDemo === 'true');
 
       const savedLocalNet = localStorage.getItem('wallet_local_net');
       if (savedLocalNet) setLocalNetwork(savedLocalNet as Network);
@@ -112,10 +104,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('wallet_transactions', JSON.stringify(transactions));
       localStorage.setItem('wallet_staked', JSON.stringify(stakedBalances));
       localStorage.setItem('wallet_tokens', JSON.stringify(tokenBalances));
-      localStorage.setItem('wallet_is_demo', isDemoConnected.toString());
       localStorage.setItem('wallet_local_net', localNetwork);
     }
-  }, [balance, transactions, stakedBalances, tokenBalances, isDemoConnected, localNetwork, isHydrated]);
+  }, [balance, transactions, stakedBalances, tokenBalances, localNetwork, isHydrated]);
 
   // Sync real balance if AppKit connects
   useEffect(() => {
@@ -133,18 +124,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     fetchBalance();
   }, [appKitIsConnected, appKitAddress, walletProvider]);
 
-  const connect = async (selectedNetwork: Network, isDemo: boolean = false) => {
-    if (isDemo) {
-      setIsDemoConnected(true);
-      setLocalNetwork(selectedNetwork);
-      setBalance(10000); // $10,000 USDC starting balance
-      setTokenBalances({
-        NADO: 500,
-        ETH: 1.5
-      });
-      return;
-    }
-
+  const connect = async (_selectedNetwork?: Network) => {
     try {
       await open();
     } catch (error) {
@@ -156,7 +136,6 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     if (appKitIsConnected) {
       appKitDisconnect();
     }
-    setIsDemoConnected(false);
     setBalance(0);
   };
 

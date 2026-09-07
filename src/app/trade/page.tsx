@@ -216,32 +216,27 @@ export default function ProTradePage() {
   const liveBids = currentBook?.bids || [];
 
   let accumAskTotal = 0;
-  const formattedAsks = liveAsks.slice(0, 5).map(([p, s]) => {
-    accumAskTotal += s;
-    return { price: p > 0 ? p : price * 1.0005, size: s > 0 ? Math.round(s * 1000) / 1000 : 1500, total: Math.round(accumAskTotal * 1000) / 1000 };
-  });
+  const formattedAsks = liveAsks
+    .filter(([p, s]) => p > 0 && s > 0)
+    .slice(0, 5)
+    .map(([p, s]) => {
+      const size = Math.round(s * 1000) / 1000;
+      accumAskTotal += size;
+      return { price: p, size, total: Math.round(accumAskTotal * 1000) / 1000 };
+    });
 
   let accumBidTotal = 0;
-  const formattedBids = liveBids.slice(0, 5).map(([p, s]) => {
-    accumBidTotal += s;
-    return { price: p > 0 ? p : price * 0.9995, size: s > 0 ? Math.round(s * 1000) / 1000 : 1500, total: Math.round(accumBidTotal * 1000) / 1000 };
-  });
+  const formattedBids = liveBids
+    .filter(([p, s]) => p > 0 && s > 0)
+    .slice(0, 5)
+    .map(([p, s]) => {
+      const size = Math.round(s * 1000) / 1000;
+      accumBidTotal += size;
+      return { price: p, size, total: Math.round(accumBidTotal * 1000) / 1000 };
+    });
 
-  const orderBookAsks = formattedAsks.length > 0 ? formattedAsks : (apiOrderBook.asks.length > 0 ? apiOrderBook.asks : [
-    { price: Math.round(price * 1.0020 * 100) / 100, size: 14.5, total: 45.0 },
-    { price: Math.round(price * 1.0015 * 100) / 100, size: 8.2, total: 30.5 },
-    { price: Math.round(price * 1.0010 * 100) / 100, size: 12.0, total: 22.3 },
-    { price: Math.round(price * 1.0005 * 100) / 100, size: 4.5, total: 10.3 },
-    { price: Math.round(price * 1.0002 * 100) / 100, size: 5.8, total: 5.8 },
-  ]);
-
-  const orderBookBids = formattedBids.length > 0 ? formattedBids : (apiOrderBook.bids.length > 0 ? apiOrderBook.bids : [
-    { price: Math.round(price * 0.9998 * 100) / 100, size: 8.5, total: 8.5 },
-    { price: Math.round(price * 0.9995 * 100) / 100, size: 15.2, total: 23.7 },
-    { price: Math.round(price * 0.9990 * 100) / 100, size: 4.1, total: 27.8 },
-    { price: Math.round(price * 0.9985 * 100) / 100, size: 18.0, total: 45.8 },
-    { price: Math.round(price * 0.9980 * 100) / 100, size: 9.0, total: 54.8 },
-  ]);
+  const orderBookAsks = formattedAsks.length > 0 ? formattedAsks : apiOrderBook.asks;
+  const orderBookBids = formattedBids.length > 0 ? formattedBids : apiOrderBook.bids;
 
   // Real-time Recent Trades feed
   const liveTradeList = liveTradesMap[activeProductId] || [];

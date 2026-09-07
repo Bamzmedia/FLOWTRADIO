@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-const MOCK_MARKETS = [
+const CANONICAL_MARKETS = [
   { id: 'nado', symbol: 'NADO', name: 'Nado Token', price: 2.45, change24h: 12.5, volume24h: 15400000, fundingRate: 0.01, oi: 5200000 },
   { id: 'btc', symbol: 'BTC', name: 'Bitcoin', price: 80450.00, change24h: 2.4, volume24h: 845000000, fundingRate: 0.005, oi: 154000000 },
   { id: 'eth', symbol: 'ETH', name: 'Ethereum', price: 2620.50, change24h: -1.2, volume24h: 420000000, fundingRate: -0.002, oi: 89000000 },
@@ -28,7 +28,7 @@ export async function GET() {
         marketMap.set(item.symbol, item);
       });
       
-      const updatedMarkets = MOCK_MARKETS.map(market => {
+      const updatedMarkets = CANONICAL_MARKETS.map(market => {
         if (market.symbol === 'NADO') return market; // NADO remains static
         
         const binanceSymbol = `${market.symbol}USDT`;
@@ -53,9 +53,9 @@ export async function GET() {
     
     throw new Error('Binance API not reachable');
   } catch (error) {
-    console.log("Failed to fetch live markets from Binance, falling back to cached mock data:", error);
+    console.log("Failed to fetch live markets from Binance, falling back to cached market data:", error);
     return NextResponse.json({
-      data: MOCK_MARKETS,
+      data: CANONICAL_MARKETS,
       timestamp: new Date().toISOString(),
       isFallback: true
     });

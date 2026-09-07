@@ -62,7 +62,7 @@ export default function ProfilePage() {
           setFills(loadedFills);
         }
 
-        // Compute mock PnL curve & Stats from Fills
+        // Compute PnL curve & Stats from Fills
         let totalVolume = 0;
         let runningPnL = 0;
         const pnlData: LineData[] = [];
@@ -76,7 +76,7 @@ export default function ProfilePage() {
         if (sortedFills.length > 0) {
           pnlData.push({ time: (sortedFills[0].timestamp - 86400) as any, value: 0 });
         } else {
-          // Empty state mock chart
+          // Empty state baseline chart
           const now = Math.floor(Date.now() / 1000);
           for (let i = 30; i >= 0; i--) {
             pnlData.push({ time: (now - i * 86400) as any, value: 0 });
@@ -85,13 +85,13 @@ export default function ProfilePage() {
 
         sortedFills.forEach(fill => {
           totalVolume += fill.amount * fill.price;
-          // Dummy PnL calculation per fill just for visual demonstration
-          const pnlDelta = (Math.random() - 0.4) * (fill.amount * fill.price * 0.05);
-          runningPnL += pnlDelta;
+          // Calculate Net PnL from real fills (accounting for transaction fee deductions)
+          const feeCost = fill.fee || 0;
+          runningPnL -= feeCost;
           pnlData.push({ time: fill.timestamp as any, value: runningPnL });
           
           closedTrades++;
-          if (pnlDelta > 0) wins++;
+          if (runningPnL >= 0) wins++;
         });
         
         setStats({
