@@ -26,20 +26,30 @@ export default function CopyTradeModal({ trader, onClose }: CopyTradeModalProps)
   const [status, setStatus] = useState<'idle' | 'copying' | 'success'>('idle');
 
   const handleCopy = () => {
-    if (!isConnected || parseFloat(amount) <= 0 || parseFloat(amount) > balance) return;
+    const numAmount = parseFloat(amount);
+    if (!isConnected || numAmount <= 0 || numAmount > balance) return;
     
-    setStatus('copying');
-    
-    // Simulate network delay
-    setTimeout(() => {
-      addTransaction({
-        type: 'Trade',
-        amount: -parseFloat(amount),
-        asset: 'USDC',
-        network: network,
+    try {
+      const activeCopies = JSON.parse(localStorage.getItem('active_copy_trades') || '[]');
+      activeCopies.push({
+        traderId: trader.address,
+        traderName: trader.name,
+        allocation: numAmount,
+        stopLoss,
+        startedAt: Date.now(),
       });
-      setStatus('success');
-    }, 1500);
+      localStorage.setItem('active_copy_trades', JSON.stringify(activeCopies));
+    } catch {}
+
+    addTransaction({
+      id: `copy_${Date.now()}`,
+      type: 'Trade',
+      amount: -numAmount,
+      asset: 'USDC',
+      network: network,
+      status: 'Completed',
+    });
+    setStatus('success');
   };
 
   if (status === 'success') {

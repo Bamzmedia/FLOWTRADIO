@@ -8,7 +8,7 @@ import { useLocalization } from '@/components/LocalizationContext';
 
 export default function LandingPage() {
   const { t } = useLocalization();
-  const [stats, setStats] = React.useState({ volume: 0, users: 0, latency: 15 });
+  const [stats, setStats] = React.useState({ volume: 0, trades: 0, latency: 0 });
   const [isLoadingStats, setIsLoadingStats] = React.useState(true);
   const [statsError, setStatsError] = React.useState<string | null>(null);
 
@@ -18,7 +18,7 @@ export default function LandingPage() {
     async function fetchPlatformStats() {
       try {
         setIsLoadingStats(true);
-        // 1. Fetch real aggregated 24h trading volume from live markets feed
+        // 1. Fetch real aggregated 24h trading volume and executions from live markets feed
         const response = await fetch('/api/markets');
         if (!response.ok) {
           throw new Error(`Failed to fetch market metrics (status ${response.status})`);
@@ -26,8 +26,10 @@ export default function LandingPage() {
         const json = await response.json();
         
         let total24hVolume = 0;
+        let total24hTrades = 0;
         if (json && Array.isArray(json.data)) {
           total24hVolume = json.data.reduce((acc: number, item: any) => acc + (item.volume24h || 0), 0);
+          total24hTrades = json.meta?.totalTradesCount || json.data.reduce((acc: number, item: any) => acc + (item.tradesCount || 0), 0);
         }
 
         // 2. Measure actual API execution latency
@@ -37,9 +39,9 @@ export default function LandingPage() {
 
         if (isMounted) {
           setStats({
-            volume: total24hVolume > 0 ? total24hVolume : 1720000000,
-            users: 18450,
-            latency: pingMs > 0 ? Math.min(pingMs, 45) : 15,
+            volume: total24hVolume,
+            trades: total24hTrades,
+            latency: pingMs > 0 ? pingMs : 0,
           });
           setStatsError(null);
         }
@@ -47,8 +49,7 @@ export default function LandingPage() {
         console.error("Platform stats fetch error:", err);
         if (isMounted) {
           setStatsError(err.message || "Failed to load live metrics");
-          // Fallback to active market volume baseline
-          setStats({ volume: 1720000000, users: 18450, latency: 15 });
+          setStats({ volume: 0, trades: 0, latency: 0 });
         }
       } finally {
         if (isMounted) setIsLoadingStats(false);
@@ -113,13 +114,17 @@ export default function LandingPage() {
             
             <div className="grid grid-cols-2 md:grid-cols-4 gap-8 relative z-10 divide-x divide-white/10">
               <div className="flex flex-col items-center justify-center text-center">
-                <div className="text-4xl font-black text-white mb-2 tracking-tight">${stats.volume > 0 ? (stats.volume / 1e9).toFixed(1) + 'B+' : '0'}</div>
-                <div className="text-sm font-semibold text-gray-400 tracking-widest uppercase">Trading Volume</div>
+                <div className="text-4xl font-black text-white mb-2 tracking-tight">
+                  {stats.volume > 0 ? '$' + (stats.volume / 1e9).toFixed(2) + 'B' : '$0.00'}
+                </div>
+                <div className="text-sm font-semibold text-gray-400 tracking-widest uppercase">24h Volume</div>
               </div>
               
               <div className="flex flex-col items-center justify-center text-center">
-                <div className="text-4xl font-black text-white mb-2 tracking-tight">{stats.users > 0 ? (stats.users / 1000).toFixed(0) + 'k' : '0'}</div>
-                <div className="text-sm font-semibold text-gray-400 tracking-widest uppercase">Active Traders</div>
+                <div className="text-4xl font-black text-white mb-2 tracking-tight">
+                  {stats.trades > 0 ? (stats.trades >= 1e6 ? (stats.trades / 1e6).toFixed(1) + 'M+' : (stats.trades / 1e3).toFixed(0) + 'k+') : '0'}
+                </div>
+                <div className="text-sm font-semibold text-gray-400 tracking-widest uppercase">24h Executions</div>
               </div>
               
               <div className="flex flex-col items-center justify-center text-center">

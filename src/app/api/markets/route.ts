@@ -3,58 +3,130 @@ import { NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 const CANONICAL_MARKETS = [
-  { id: 'btc', symbol: 'BTC', name: 'Bitcoin', price: 80450.00, change24h: 2.4, volume24h: 845000000, fundingRate: 0.005, oi: 154000000 },
-  { id: 'eth', symbol: 'ETH', name: 'Ethereum', price: 2620.50, change24h: -1.2, volume24h: 420000000, fundingRate: -0.002, oi: 89000000 },
-  { id: 'sol', symbol: 'SOL', name: 'Solana', price: 148.90, change24h: 8.5, volume24h: 156000000, fundingRate: 0.015, oi: 45000000 },
-  { id: 'avax', symbol: 'AVAX', name: 'Avalanche', price: 35.40, change24h: 1.5, volume24h: 45000000, fundingRate: 0.008, oi: 12000000 },
-  { id: 'link', symbol: 'LINK', name: 'Chainlink', price: 18.20, change24h: -4.2, volume24h: 32000000, fundingRate: -0.01, oi: 8500000 },
-  { id: 'arb', symbol: 'ARB', name: 'Arbitrum', price: 1.15, change24h: 4.2, volume24h: 28000000, fundingRate: 0.005, oi: 6200000 },
-  { id: 'doge', symbol: 'DOGE', name: 'Dogecoin', price: 0.14, change24h: -8.5, volume24h: 85000000, fundingRate: -0.02, oi: 18000000 },
+  { id: 'btc', symbol: 'BTC', name: 'Bitcoin' },
+  { id: 'eth', symbol: 'ETH', name: 'Ethereum' },
+  { id: 'sol', symbol: 'SOL', name: 'Solana' },
+  { id: 'avax', symbol: 'AVAX', name: 'Avalanche' },
+  { id: 'link', symbol: 'LINK', name: 'Chainlink' },
+  { id: 'arb', symbol: 'ARB', name: 'Arbitrum' },
+  { id: 'doge', symbol: 'DOGE', name: 'Dogecoin' },
 ];
 
 export async function GET() {
   try {
     const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "LINKUSDT", "ARBUSDT", "DOGEUSDT"];
-    const response = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`, {
-      next: { revalidate: 10 } // Cache REST request for 10 seconds to avoid HTTP 429
-    });
-    
-    if (response.ok) {
-      const data = await response.json();
-      
-      const marketMap = new Map();
-      data.forEach((item: any) => {
-        marketMap.set(item.symbol, item);
-      });
-      
-      const updatedMarkets = CANONICAL_MARKETS.map(market => {
-        const binanceSymbol = `${market.symbol}USDT`;
-        const ticker = marketMap.get(binanceSymbol);
-        
-        if (ticker) {
-          return {
-            ...market,
-            price: parseFloat(ticker.lastPrice),
-            change24h: parseFloat(ticker.priceChangePercent),
-            volume24h: parseFloat(ticker.quoteVolume),
-          };
+
+    // 1. Fetch 24hr spot ticker metrics (price, 24h change, volume, trade count)
+    const tickerPromise = fetch(
+      `https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`,
+      { next: { revalidate: 10 } }
+    ).then((r) => (r.ok ? r.json() : []));
+
+    // 2. Fetch live perpetual funding rates from Binance Futures
+    const premiumIndexPromise = fetch(
+      'https://fapi.binance.com/fapi/v1/premiumIndex',
+      { next: { revalidate: 10 } }
+    ).then((r) => (r.ok ? r.json() : []));
+
+    // 3. Fetch live open interest for each perpetual pair
+    const oiPromises = Promise.allSettled(
+      symbols.map(async (sym) => {
+        try {
+          const res = await fetch(`https://fapi.binance.com/fapi/v1/openInterest?symbol=${sym}`, {
+            next: { revalidate: 15 },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            return { symbol: sym, openInterest: parseFloat(data.openInterest || '0') };
+          }
+        } catch {}
+        return { symbol: sym, openInterest: 0 };
+      })
+    );
+
+    const [tickerData, premiumData, oiResults] = await Promise.all([
+      tickerPromise,
+      premiumIndexPromise,
+      oiPromises,
+    ]);
+
+    const marketMap = new Map();
+    if (Array.isArray(tickerData)) {
+      tickerData.forEach((item: any) => marketMap.set(item.symbol, item));
+    }
+
+    const premiumMap = new Map();
+    if (Array.isArray(premiumData)) {
+      premiumData.forEach((item: any) => premiumMap.set(item.symbol, item));
+    }
+
+    const oiMap = new Map();
+    if (Array.isArray(oiResults)) {
+      oiResults.forEach((res) => {
+        if (res.status === 'fulfilled' && res.value) {
+          oiMap.set(res.value.symbol, res.value.openInterest);
         }
-        return market;
-      });
-      
-      return NextResponse.json({
-        data: updatedMarkets,
-        timestamp: new Date().toISOString()
       });
     }
-    
-    throw new Error('Binance API not reachable');
-  } catch (error) {
-    console.log("Failed to fetch live markets from Binance, falling back to cached market data:", error);
-    return NextResponse.json({
-      data: CANONICAL_MARKETS,
-      timestamp: new Date().toISOString(),
-      isFallback: true
+
+    let totalTradesCount = 0;
+
+    const updatedMarkets = CANONICAL_MARKETS.map((market) => {
+      const binanceSymbol = `${market.symbol}USDT`;
+      const ticker = marketMap.get(binanceSymbol);
+      const premium = premiumMap.get(binanceSymbol);
+      const rawOi = oiMap.get(binanceSymbol) || 0;
+
+      const price = ticker ? parseFloat(ticker.lastPrice) : 0;
+      const change24h = ticker ? parseFloat(ticker.priceChangePercent) : 0;
+      const volume24h = ticker ? parseFloat(ticker.quoteVolume) : 0;
+      const tradesCount = ticker ? parseInt(ticker.count || '0', 10) : 0;
+      totalTradesCount += tradesCount;
+
+      // Real 8h perpetual funding rate in percentage (e.g. 0.0001 -> 0.0100%)
+      const fundingRate = premium && premium.lastFundingRate ? parseFloat(premium.lastFundingRate) * 100 : 0;
+
+      // Real USD Open Interest = (contract open interest * current price)
+      const oiUsd = rawOi * (price > 0 ? price : 1);
+
+      return {
+        id: market.id,
+        symbol: market.symbol,
+        name: market.name,
+        price,
+        change24h,
+        volume24h,
+        fundingRate,
+        oi: oiUsd,
+        tradesCount,
+      };
     });
+
+    return NextResponse.json({
+      data: updatedMarkets,
+      meta: {
+        totalTradesCount,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error("Failed to fetch live markets from Binance:", error);
+    return NextResponse.json(
+      {
+        error: 'Live market feeds currently unavailable',
+        data: CANONICAL_MARKETS.map((m) => ({
+          ...m,
+          price: 0,
+          change24h: 0,
+          volume24h: 0,
+          fundingRate: 0,
+          oi: 0,
+          tradesCount: 0,
+        })),
+        isFallback: true,
+        timestamp: new Date().toISOString(),
+      },
+      { status: 503 }
+    );
   }
 }

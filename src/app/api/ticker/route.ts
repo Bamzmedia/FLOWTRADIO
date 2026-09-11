@@ -69,13 +69,41 @@ export async function GET(request: Request) {
     }
   }
 
-  // Default fallback if all APIs are offline
+  // 3. Pyth Hermes Oracle Fallback if other sources are offline
   if (price === 0) {
-    const defaults: Record<string, number> = { SOLUSDT: 148.5, BTCUSDT: 86500.0, ETHUSDT: 2680.0 };
-    price = defaults[symbol] || 100.0;
-    high24h = price * 1.03;
-    low24h = price * 0.97;
-    volume24h = '45,210,000';
+    try {
+      const PYTH_IDS: Record<string, string> = {
+        BTCUSDT: '0xe62df6e88821a32be663b5823081fdda3a0d2d17964b00e6323a43368a4a4a44',
+        ETHUSDT: '0xff61491a931112ddf1bdc1c25e835787f1f1a41b93ca8218079638d1a5747074',
+        SOLUSDT: '0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d',
+      };
+      const pythId = PYTH_IDS[symbol];
+      if (pythId) {
+        const pRes = await fetch(`https://hermes.pyth.network/v2/updates/price/latest?ids[]=${pythId}`, { cache: 'no-store' });
+        if (pRes.ok) {
+          const pData = await pRes.json();
+          if (pData.parsed?.[0]?.price) {
+            const raw = BigInt(pData.parsed[0].price.price);
+            const expo = pData.parsed[0].price.expo;
+            const p = Number(raw) * Math.pow(10, expo);
+            if (p > 0) {
+              price = p;
+              high24h = p;
+              low24h = p;
+            }
+          }
+        }
+      }
+    } catch (pythErr) {
+      console.warn('[TickerAPI] Pyth Hermes fallback failed...', pythErr);
+    }
+  }
+
+  if (price === 0) {
+    return NextResponse.json(
+      { error: 'Live price feed unavailable for requested symbol', symbol },
+      { status: 503 }
+    );
   }
 
   return NextResponse.json({

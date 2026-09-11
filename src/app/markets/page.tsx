@@ -20,13 +20,13 @@ type Market = {
 };
 
 const INITIAL_MARKETS: Market[] = [
-  { id: 'btc', symbol: 'BTC', name: 'Bitcoin', price: 80450.00, change24h: 2.4, volume24h: 845000000, fundingRate: 0.005, oi: 154000000 },
-  { id: 'eth', symbol: 'ETH', name: 'Ethereum', price: 2620.50, change24h: -1.2, volume24h: 420000000, fundingRate: -0.002, oi: 89000000 },
-  { id: 'sol', symbol: 'SOL', name: 'Solana', price: 148.90, change24h: 8.5, volume24h: 156000000, fundingRate: 0.015, oi: 45000000 },
-  { id: 'avax', symbol: 'AVAX', name: 'Avalanche', price: 35.40, change24h: 1.5, volume24h: 45000000, fundingRate: 0.008, oi: 12000000 },
-  { id: 'link', symbol: 'LINK', name: 'Chainlink', price: 18.20, change24h: -4.2, volume24h: 32000000, fundingRate: -0.01, oi: 8500000 },
-  { id: 'arb', symbol: 'ARB', name: 'Arbitrum', price: 1.15, change24h: 4.2, volume24h: 28000000, fundingRate: 0.005, oi: 6200000 },
-  { id: 'doge', symbol: 'DOGE', name: 'Dogecoin', price: 0.14, change24h: -8.5, volume24h: 85000000, fundingRate: -0.02, oi: 18000000 },
+  { id: 'btc', symbol: 'BTC', name: 'Bitcoin', price: 0, change24h: 0, volume24h: 0, fundingRate: 0, oi: 0 },
+  { id: 'eth', symbol: 'ETH', name: 'Ethereum', price: 0, change24h: 0, volume24h: 0, fundingRate: 0, oi: 0 },
+  { id: 'sol', symbol: 'SOL', name: 'Solana', price: 0, change24h: 0, volume24h: 0, fundingRate: 0, oi: 0 },
+  { id: 'avax', symbol: 'AVAX', name: 'Avalanche', price: 0, change24h: 0, volume24h: 0, fundingRate: 0, oi: 0 },
+  { id: 'link', symbol: 'LINK', name: 'Chainlink', price: 0, change24h: 0, volume24h: 0, fundingRate: 0, oi: 0 },
+  { id: 'arb', symbol: 'ARB', name: 'Arbitrum', price: 0, change24h: 0, volume24h: 0, fundingRate: 0, oi: 0 },
+  { id: 'doge', symbol: 'DOGE', name: 'Dogecoin', price: 0, change24h: 0, volume24h: 0, fundingRate: 0, oi: 0 },
 ];
 
 const COINGECKO_MAP: Record<string, string> = {
@@ -74,55 +74,61 @@ export default function MarketsPage() {
     });
   }, [liveTrades]);
 
-  // Fetch prices from Binance REST API with CoinGecko fallback
+  // Fetch prices and live metrics from /api/markets (Binance Spot & Futures)
   const fetchPrices = async () => {
     setIsRefreshing(true);
 
     try {
-      const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "LINKUSDT", "ARBUSDT"];
-      const bRes = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`);
-      if (bRes.ok) {
-        const bData = await bRes.json();
-        setMarketsData(prev => prev.map(m => {
-          const ticker = bData.find((t: any) => t.symbol === `${m.symbol}USDT`);
-          if (ticker) {
-            return {
-              ...m,
-              price: parseFloat(ticker.lastPrice),
-              change24h: parseFloat(ticker.priceChangePercent),
-              volume24h: parseFloat(ticker.quoteVolume),
-            };
-          }
-          return m;
-        }));
-        setIsCachedData(false);
-      } else {
-        throw new Error(`Binance status ${bRes.status}`);
-      }
-    } catch (err) {
-      console.warn("Binance fetch failed. Attempting CoinGecko fallback...", err);
-      try {
-        const cgUrl = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,avalanche-2,chainlink,arbitrum&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true';
-        const res = await fetch(cgUrl);
-        if (res.ok) {
-          const data = await res.json();
+      const res = await fetch('/api/markets');
+      if (res.ok) {
+        const json = await res.json();
+        if (json && Array.isArray(json.data)) {
           setMarketsData(prev => prev.map(m => {
-            const cgKey = Object.keys(COINGECKO_MAP).find(k => COINGECKO_MAP[k] === m.id);
-            if (cgKey && data[cgKey]) {
-              const coin = data[cgKey];
+            const live = json.data.find((item: any) => item.symbol === m.symbol);
+            if (live) {
               return {
                 ...m,
-                price: coin.usd || m.price,
-                change24h: coin.usd_24h_change !== undefined ? parseFloat(coin.usd_24h_change.toFixed(2)) : m.change24h,
-                volume24h: coin.usd_24h_vol || m.volume24h,
+                price: live.price > 0 ? live.price : m.price,
+                change24h: live.change24h,
+                volume24h: live.volume24h,
+                fundingRate: live.fundingRate,
+                oi: live.oi,
               };
             }
             return m;
           }));
           setIsCachedData(false);
+          setLastUpdatedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+          setIsRefreshing(false);
+          return;
         }
-      } catch (cgErr) {
-        console.error("All live price sources failed. Using cached fallback data.", cgErr);
+      }
+      throw new Error(`API status ${res.status}`);
+    } catch (apiErr) {
+      console.warn("/api/markets fetch failed, attempting direct Binance fallback...", apiErr);
+      try {
+        const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "LINKUSDT", "ARBUSDT", "DOGEUSDT"];
+        const bRes = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`);
+        if (bRes.ok) {
+          const bData = await bRes.json();
+          setMarketsData(prev => prev.map(m => {
+            const ticker = bData.find((t: any) => t.symbol === `${m.symbol}USDT`);
+            if (ticker) {
+              return {
+                ...m,
+                price: parseFloat(ticker.lastPrice),
+                change24h: parseFloat(ticker.priceChangePercent),
+                volume24h: parseFloat(ticker.quoteVolume),
+              };
+            }
+            return m;
+          }));
+          setIsCachedData(false);
+        } else {
+          setIsCachedData(true);
+        }
+      } catch (directErr) {
+        console.error("All price sources failed", directErr);
         setIsCachedData(true);
       }
     }

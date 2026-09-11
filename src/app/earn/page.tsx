@@ -6,9 +6,18 @@ import { useLocalization } from '@/components/LocalizationContext';
 import { useWallet } from '@/components/WalletContext';
 import { Coins, Wallet, ArrowRight, ShieldCheck, TrendingUp, Pickaxe, Flame } from 'lucide-react';
 
-const POOLS = [
-  { id: 'usdc', asset: 'USDC', name: 'USD Coin', apy: 8.2, tvl: 12500000, color: 'from-blue-500 to-indigo-600' },
-  { id: 'eth', asset: 'ETH', name: 'Ethereum', apy: 4.5, tvl: 38000000, color: 'from-purple-500 to-pink-500' },
+interface EarnPool {
+  id: string;
+  asset: string;
+  name: string;
+  apy: number;
+  tvl: number;
+  color: string;
+}
+
+const POOLS: EarnPool[] = [
+  { id: 'usdc', asset: 'USDC', name: 'USD Coin', apy: 6.4, tvl: 0, color: 'from-blue-500 to-indigo-600' },
+  { id: 'eth', asset: 'ETH', name: 'Ethereum', apy: 3.8, tvl: 0, color: 'from-purple-500 to-pink-500' },
 ];
 
 export default function EarnPage() {
@@ -24,33 +33,22 @@ export default function EarnPage() {
     const numAmount = parseFloat(amount);
     if (!numAmount || numAmount <= 0) return;
 
-    if (activeTab === 'stake') {
-      if (numAmount > activeBalance) {
-        alert(`Insufficient ${activePool.asset} balance!`);
-        return;
-      }
-      updateStakedBalance(activePool.id, numAmount);
-      addTransaction({
-        type: 'Stake',
-        amount: numAmount,
-        asset: activePool.asset,
-        network: network
-      });
-      alert(`Successfully staked ${numAmount} ${activePool.asset}!`);
-    } else {
-      if (numAmount > stakedBalances[activePool.id]) {
-        alert("Insufficient staked balance!");
-        return;
-      }
-      updateStakedBalance(activePool.id, -numAmount);
-      addTransaction({
-        type: 'Unstake',
-        amount: numAmount,
-        asset: activePool.asset,
-        network: network
-      });
-      alert(`Successfully unstaked ${numAmount} ${activePool.asset}!`);
+    if (!isConnected) {
+      alert("Please connect your Web3 wallet first!");
+      return;
     }
+
+    if (activeTab === 'stake' && numAmount > activeBalance) {
+      alert(`Insufficient ${activePool.asset} balance!`);
+      return;
+    }
+
+    if (activeTab === 'unstake' && numAmount > (stakedBalances[activePool.id] || 0)) {
+      alert("Insufficient staked balance!");
+      return;
+    }
+
+    alert("Simple Earn vaults are deploying to Ink Mainnet. Smart contract staking will be activated once vault contracts are verified onchain.");
     setAmount('');
   };
 
@@ -113,7 +111,7 @@ export default function EarnPage() {
                     </div>
                     <div>
                       <div className="text-sm text-gray-400 mb-1">TVL</div>
-                      <div className="text-xl font-bold text-white">{formatCurrency(pool.tvl)}</div>
+                      <div className="text-xl font-bold text-white">{pool.tvl > 0 ? formatCurrency(pool.tvl) : 'Initializing'}</div>
                     </div>
                   </div>
                   
