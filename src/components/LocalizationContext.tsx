@@ -122,6 +122,34 @@ const translations = {
   }
 };
 
+const regionalData = {
+  NA: [
+    { asset: 'BTC-PERP', change: 2.4 },
+    { asset: 'SOL-PERP', change: 8.5 },
+    { asset: 'AVAX-PERP', change: 1.5 },
+  ],
+  EU: [
+    { asset: 'ETH-PERP', change: -1.2 },
+    { asset: 'EUR-PERP', change: 0.8 },
+    { asset: 'LINK-PERP', change: -4.2 },
+  ],
+  UK: [
+    { asset: 'GBP-PERP', change: 0.5 },
+    { asset: 'BTC-PERP', change: 2.4 },
+    { asset: 'MATIC-PERP', change: 0.5 },
+  ],
+  ASIA: [
+    { asset: 'SOL-PERP', change: 8.5 },
+    { asset: 'ARB-PERP', change: 4.2 },
+    { asset: 'DOGE-PERP', change: -8.5 },
+  ],
+  GLOBAL: [
+    { asset: 'BTC-PERP', change: 2.4 },
+    { asset: 'ETH-PERP', change: -1.2 },
+    { asset: 'SOL-PERP', change: 8.5 },
+  ]
+};
+
 const LocalizationContext = createContext<LocalizationState | undefined>(undefined);
 
 export function LocalizationProvider({ children }: { children: ReactNode }) {
@@ -181,7 +209,7 @@ export function LocalizationProvider({ children }: { children: ReactNode }) {
   };
 
   const getRegionalTrending = () => {
-    return trendingData;
+    return trendingData.length > 0 ? trendingData : (mode === 'global' ? regionalData['GLOBAL'] : regionalData[region]);
   };
 
   return (

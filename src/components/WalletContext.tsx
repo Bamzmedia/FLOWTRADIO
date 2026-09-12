@@ -9,7 +9,6 @@ export type Network = 'Ink';
 
 export interface Transaction {
   id: string;
-  txHash?: string;
   type: 'Deposit' | 'Withdraw' | 'Transfer' | 'Trade' | 'Stake' | 'Unstake' | 'Swap';
   amount: number;
   asset: string;
@@ -31,9 +30,7 @@ interface WalletState {
   connect: (network?: Network) => void;
   disconnect: () => void;
   setNetwork: (network: Network) => void;
-  addTransaction: (tx: Omit<Transaction, 'id' | 'date' | 'status'> & { id?: string; status?: 'Pending' | 'Completed' | 'Failed' }) => void;
-  updateTransactionStatus: (id: string, status: 'Pending' | 'Completed' | 'Failed', txHash?: string) => void;
-  refreshBalance: () => Promise<void>;
+  addTransaction: (tx: Omit<Transaction, 'id' | 'date' | 'status'>) => void;
   updateStakedBalance: (poolId: string, amount: number) => void;
   updateTokenBalance: (tokenId: string, amount: number) => void;
 }
@@ -153,34 +150,33 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const refreshBalance = async () => {
-    if (appKitIsConnected && appKitAddress && walletProvider) {
-      try {
-        const provider = new ethers.BrowserProvider(walletProvider as any);
-        const balanceWei = await provider.getBalance(appKitAddress);
-        setBalance(parseFloat(ethers.formatEther(balanceWei)));
-      } catch (e) {
-        console.error("Failed to refresh balance from provider", e);
-      }
-    }
-  };
-
-  const addTransaction = (tx: Omit<Transaction, 'id' | 'date' | 'status'> & { id?: string; status?: 'Pending' | 'Completed' | 'Failed' }) => {
+  const addTransaction = (tx: Omit<Transaction, 'id' | 'date' | 'status'>) => {
     const newTx: Transaction = {
       ...tx,
-      id: tx.id || tx.txHash || `tx_${Date.now()}`,
+      id: `tx-${Math.random().toString(36).substring(7)}`,
       date: new Date(),
-      status: tx.status || 'Completed',
+      status: 'Pending',
     };
     setTransactions(prev => [newTx, ...prev]);
-    refreshBalance().catch(() => {});
-  };
-
-  const updateTransactionStatus = (id: string, status: 'Pending' | 'Completed' | 'Failed', txHash?: string) => {
-    setTransactions(prev => prev.map(t => (t.id === id ? { ...t, status, ...(txHash ? { txHash } : {}) } : t)));
-    if (status === 'Completed') {
-      refreshBalance().catch(() => {});
-    }
+    
+    // Simulate completion after 2 seconds
+    setTimeout(() => {
+      setTransactions(prev => prev.map(t => t.id === newTx.id ? { ...t, status: 'Completed' } : t));
+      
+      // Update balance if deposit, withdraw, trade, stake, or unstake
+      if (tx.type === 'Deposit') setBalance(b => b + tx.amount);
+      if (tx.type === 'Withdraw') setBalance(b => b - tx.amount);
+      if (tx.type === 'Trade') setBalance(b => b + tx.amount); // negative amount for deducting cost
+      if (tx.type === 'Stake') {
+        if (tx.asset === 'USDC') setBalance(b => b - Math.abs(tx.amount));
+        else setTokenBalances(prev => ({...prev, [tx.asset]: (prev[tx.asset] || 0) - Math.abs(tx.amount)}));
+      }
+      if (tx.type === 'Unstake') {
+        if (tx.asset === 'USDC') setBalance(b => b + Math.abs(tx.amount));
+        else setTokenBalances(prev => ({...prev, [tx.asset]: (prev[tx.asset] || 0) + Math.abs(tx.amount)}));
+      }
+      if (tx.type === 'Swap') setBalance(b => b - Math.abs(tx.amount)); // Deduct base USDC cost
+    }, 2000);
   };
 
   const updateStakedBalance = (poolId: string, amount: number) => {
@@ -194,7 +190,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   return (
     <WalletContext.Provider value={{
       isConnected, address, network, balance, transactions, stakedBalances, tokenBalances,
-      connect, disconnect, setNetwork, addTransaction, updateTransactionStatus, refreshBalance, updateStakedBalance, updateTokenBalance
+      connect, disconnect, setNetwork, addTransaction, updateStakedBalance, updateTokenBalance
     }}>
       {children}
     </WalletContext.Provider>

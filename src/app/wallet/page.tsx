@@ -4,19 +4,14 @@ import React, { useState } from 'react';
 import { useWallet } from '@/components/WalletContext';
 import { useLocalization } from '@/components/LocalizationContext';
 import Navbar from '@/components/Navbar';
-import { ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft, Clock, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft, Clock, ShieldCheck, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
-import { ethers } from 'ethers';
-import { useAppKitProvider } from '@reown/appkit/react';
 
 export default function WalletPage() {
-  const { isConnected, balance, network, transactions, addTransaction, updateTransactionStatus, refreshBalance } = useWallet();
+  const { isConnected, balance, network, transactions, addTransaction } = useWallet();
   const { formatCurrency, formatDate } = useLocalization();
-  const { walletProvider } = useAppKitProvider('eip155');
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'transfer'>('deposit');
   const [amount, setAmount] = useState('');
-  const [destAddress, setDestAddress] = useState('');
-  const [isPendingTx, setIsPendingTx] = useState(false);
   
   if (!isConnected) {
     return (
@@ -31,108 +26,27 @@ export default function WalletPage() {
     );
   }
 
-  const handleAction = async () => {
+  const handleAction = () => {
     const numAmount = parseFloat(amount);
     if (!numAmount || numAmount <= 0) {
       alert("Please enter a valid amount!");
       return;
     }
-
-    if (!walletProvider) {
-      alert("Web3 wallet provider not connected!");
+    if (activeTab === 'withdraw' && numAmount > balance) {
+      alert("Insufficient balance for withdrawal!");
       return;
     }
-
-    setIsPendingTx(true);
-
-    try {
-      const provider = new ethers.BrowserProvider(walletProvider as any);
-      const signer = await provider.getSigner();
-
-      if (activeTab === 'transfer') {
-        if (!destAddress || !ethers.isAddress(destAddress)) {
-          alert("Please enter a valid recipient EVM address!");
-          setIsPendingTx(false);
-          return;
-        }
-
-        const tx = await signer.sendTransaction({
-          to: destAddress,
-          value: ethers.parseEther(numAmount.toString()),
-        });
-
-        addTransaction({
-          txHash: tx.hash,
-          type: 'Transfer',
-          amount: -numAmount,
-          asset: 'ETH',
-          network: 'Ink',
-          status: 'Pending',
-        });
-
-        alert(`Transfer broadcasted to Ink network! Tx: ${tx.hash.substring(0, 12)}...`);
-        setAmount('');
-        setDestAddress('');
-
-        const receipt = await tx.wait();
-        if (receipt && receipt.status === 1) {
-          updateTransactionStatus(tx.hash, 'Completed', tx.hash);
-        } else {
-          updateTransactionStatus(tx.hash, 'Failed', tx.hash);
-        }
-      } else if (activeTab === 'deposit') {
-        const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT;
-        if (endpointContract && ethers.isAddress(endpointContract) && endpointContract !== ethers.ZeroAddress) {
-          const tx = await signer.sendTransaction({
-            to: endpointContract,
-            value: ethers.parseEther(numAmount.toString()),
-          });
-          addTransaction({
-            txHash: tx.hash,
-            type: 'Deposit',
-            amount: numAmount,
-            asset: 'ETH',
-            network: 'Ink',
-            status: 'Pending',
-          });
-          await tx.wait();
-          updateTransactionStatus(tx.hash, 'Completed', tx.hash);
-        } else {
-          addTransaction({
-            id: `dep_${Date.now()}`,
-            type: 'Deposit',
-            amount: numAmount,
-            asset: 'USDC',
-            network: 'Ink',
-            status: 'Completed',
-          });
-          alert(`Deposit recorded for ${numAmount} USDC.`);
-          setAmount('');
-        }
-      } else {
-        if (numAmount > balance) {
-          alert("Insufficient balance for withdrawal!");
-          setIsPendingTx(false);
-          return;
-        }
-        addTransaction({
-          id: `wth_${Date.now()}`,
-          type: 'Withdraw',
-          amount: -numAmount,
-          asset: 'USDC',
-          network: 'Ink',
-          status: 'Completed',
-        });
-        alert(`Withdrawal request submitted for ${numAmount} USDC.`);
-        setAmount('');
-      }
-    } catch (err: any) {
-      console.error("Wallet action error:", err);
-      alert(err?.message?.includes('user rejected') ? "Transaction was rejected in your wallet." : (err?.message || "Transaction failed."));
-    } finally {
-      setIsPendingTx(false);
-      refreshBalance().catch(() => {});
-    }
+    
+    // Simulate transaction
+    addTransaction({
+      type: activeTab === 'deposit' ? 'Deposit' : activeTab === 'withdraw' ? 'Withdraw' : 'Transfer',
+      amount: numAmount,
+      asset: 'USDC',
+      network: network,
+    });
+    
+    alert(`Successfully submitted ${activeTab} request for ${numAmount} USDC!`);
+    setAmount('');
   };
 
   return (
@@ -197,13 +111,7 @@ export default function WalletPage() {
                   <div className="text-sm text-gray-400 mb-2 font-medium flex justify-between">
                     <span>Destination Address</span>
                   </div>
-                  <input 
-                    type="text" 
-                    placeholder="0x..." 
-                    value={destAddress}
-                    onChange={(e) => setDestAddress(e.target.value)}
-                    className="bg-transparent text-sm font-mono outline-none w-full text-white placeholder:text-gray-600" 
-                  />
+                  <input type="text" placeholder="0x..." className="bg-transparent text-lg font-mono outline-none w-full" />
                 </div>
               )}
 
@@ -233,17 +141,10 @@ export default function WalletPage() {
 
               <button 
                 onClick={handleAction}
-                disabled={isPendingTx || !amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && parseFloat(amount) > balance)}
-                className={`w-full font-bold py-4 rounded-2xl transition-all duration-300 shadow-lg flex justify-center items-center gap-2 ${(isPendingTx || !amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && parseFloat(amount) > balance)) ? 'bg-white/5 text-gray-500 cursor-not-allowed' : 'bg-primary text-background hover:bg-primary/80 shadow-primary/20'}`}
+                disabled={!amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && parseFloat(amount) > balance)}
+                className={`w-full font-bold py-4 rounded-2xl transition-all duration-300 shadow-lg flex justify-center items-center gap-2 ${(!amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && parseFloat(amount) > balance)) ? 'bg-white/5 text-gray-500 cursor-not-allowed' : 'bg-primary text-background hover:bg-primary/80 shadow-primary/20'}`}
               >
-                {isPendingTx ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" />
-                    <span>Broadcasting to Ink...</span>
-                  </>
-                ) : (
-                  activeTab === 'deposit' ? 'Confirm Deposit' : activeTab === 'withdraw' ? 'Submit Withdrawal' : 'Transfer Funds'
-                )}
+                {activeTab === 'deposit' ? 'Confirm Deposit' : activeTab === 'withdraw' ? 'Submit Withdrawal' : 'Transfer Funds'}
               </button>
             </div>
           </div>
@@ -296,21 +197,9 @@ export default function WalletPage() {
                           <span className="text-xs bg-white/5 px-2 py-1 rounded border border-white/10">{tx.network}</span>
                         </td>
                         <td className="py-4 px-6 text-right">
-                          <div className="flex flex-col items-end gap-0.5">
-                            <span className={`text-xs font-bold ${tx.status === 'Completed' ? 'text-green-400' : tx.status === 'Pending' ? 'text-yellow-400 animate-pulse' : 'text-red-400'}`}>
-                              {tx.status}
-                            </span>
-                            {tx.txHash && (
-                              <a
-                                href={`https://explorer.inkonchain.com/tx/${tx.txHash}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-[10px] text-primary hover:underline font-mono"
-                              >
-                                {tx.txHash.slice(0, 6)}...{tx.txHash.slice(-4)} ↗
-                              </a>
-                            )}
-                          </div>
+                          <span className={`text-xs font-bold ${tx.status === 'Completed' ? 'text-green-400' : tx.status === 'Pending' ? 'text-yellow-400 animate-pulse' : 'text-red-400'}`}>
+                            {tx.status}
+                          </span>
                         </td>
                       </tr>
                     ))

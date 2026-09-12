@@ -3,8 +3,6 @@
 import React, { useState } from 'react';
 import { X, ArrowDownRight, ArrowUpRight, ShieldCheck, Loader2, Info } from 'lucide-react';
 import { useWallet } from './WalletContext';
-import { ethers } from 'ethers';
-import { useAppKitProvider } from '@reown/appkit/react';
 
 interface SubaccountModalProps {
   isOpen: boolean;
@@ -20,7 +18,6 @@ export default function SubaccountModal({
   freeCollateral = 0,
 }: SubaccountModalProps) {
   const { isConnected, balance, addTransaction } = useWallet();
-  const { walletProvider } = useAppKitProvider('eip155');
   const [mode, setMode] = useState<'deposit' | 'withdraw'>('deposit');
   const [amount, setAmount] = useState<string>('');
   const [subaccountName, setSubaccountName] = useState<string>('default');
@@ -56,41 +53,26 @@ export default function SubaccountModal({
     setFeedback(null);
 
     try {
-      const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT;
-      let txHash: string | undefined = undefined;
-
-      if (walletProvider && endpointContract && ethers.isAddress(endpointContract) && endpointContract !== ethers.ZeroAddress) {
-        const provider = new ethers.BrowserProvider(walletProvider as any);
-        const signer = await provider.getSigner();
-        const tx = await signer.sendTransaction({
-          to: endpointContract,
-          value: ethers.parseEther(numAmount.toString()),
-        });
-        txHash = tx.hash;
-        await tx.wait();
-      }
+      // Simulate Nado Endpoint contract deposit Collateral / withdraw Collateral transaction
+      await new Promise((res) => setTimeout(res, 1200));
 
       if (mode === 'deposit') {
         addTransaction({
-          txHash,
           type: 'Deposit',
           amount: -numAmount,
           asset: 'USDC',
           network: 'Ink',
-          status: 'Completed',
         });
         setFeedback({
           type: 'success',
-          msg: `Successfully allocated $${numAmount.toFixed(2)} USDC collateral to subaccount '${subaccountName}'!`,
+          msg: `Successfully deposited $${numAmount.toFixed(2)} USDC to subaccount '${subaccountName}'!`,
         });
       } else {
         addTransaction({
-          txHash,
           type: 'Withdraw',
           amount: numAmount,
           asset: 'USDC',
           network: 'Ink',
-          status: 'Completed',
         });
         setFeedback({
           type: 'success',
