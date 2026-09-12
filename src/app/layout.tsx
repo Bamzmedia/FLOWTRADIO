@@ -13,13 +13,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NEOTRADIO | Next-Gen Perpetuals",
+  title: "FLOWTRADIO | Next-Gen Perpetuals",
   description: "Trade crypto perpetuals with ultra-low latency and deep liquidity.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "NEOTRADIO",
+    title: "FLOWTRADIO",
   },
 };
 
