@@ -1,4 +1,4 @@
-import { NadoEnv, NadoOrder, PlaceOrderPayload, SubaccountState, OHLCVBar, PastFill } from '../types/nado';
+import { NadoEnv, NadoOrder, PlaceOrderPayload, SubaccountState, SubaccountPosition, OHLCVBar, PastFill } from '../types/nado';
 
 // Retrieve Nado Env configuration
 export function getNadoEnv(): NadoEnv {
@@ -102,23 +102,60 @@ export async function queryNadoState(queryParams: Record<string, any>, method: '
 /**
  * Fetch current subaccount state including balances, collateral, margin, and open positions.
  */
+/**
+ * Fetch current subaccount state including balances, collateral, margin, and open positions.
+ */
 export async function fetchSubaccountState(
   sender: string,
   subaccountName: string = 'default'
 ): Promise<SubaccountState> {
-  const { gateway } = getNadoEndpoints();
-  const url = `${gateway}/subaccount?sender=${encodeURIComponent(sender)}&subaccount_name=${encodeURIComponent(subaccountName)}`;
-  
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-  });
+  try {
+    const data = await fetchNadoSubaccountInfo(sender);
+    if (data) {
+      let collateral = '0';
+      if (data.spot_balances && Array.isArray(data.spot_balances)) {
+        const usdc = data.spot_balances.find((b: any) => b.product_id === 0);
+        if (usdc?.balance?.amount) {
+          collateral = (parseFloat(usdc.balance.amount) / 1e18).toString();
+        }
+      }
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch subaccount state: ${response.status} ${response.statusText}`);
+      const positions: SubaccountPosition[] = [];
+      if (data.perp_balances && Array.isArray(data.perp_balances)) {
+        data.perp_balances.forEach((pb: any) => {
+          const rawAmt = parseFloat(pb.balance?.amount || '0') / 1e18;
+          if (rawAmt !== 0) {
+            positions.push({
+              product_id: pb.product_id,
+              amount: rawAmt.toString(),
+              entry_price: (parseFloat(pb.balance?.entry_price || '0') / 1e18).toString(),
+              unrealized_pnl: (parseFloat(pb.balance?.unrealized_pnl || '0') / 1e18).toString(),
+            });
+          }
+        });
+      }
+
+      return {
+        sender,
+        subaccount_name: subaccountName,
+        collateral,
+        free_collateral: collateral,
+        margin_usage: '0',
+        positions,
+      };
+    }
+  } catch (err) {
+    console.warn('[NadoAPI] Failed to fetch subaccount state via query:', err);
   }
 
-  return response.json();
+  return {
+    sender,
+    subaccount_name: subaccountName,
+    collateral: '0',
+    free_collateral: '0',
+    margin_usage: '0',
+    positions: [],
+  };
 }
 
 /**
@@ -197,19 +234,23 @@ export async function fetchPastFills(
   sender: string,
   subaccountName: string = 'default'
 ): Promise<PastFill[]> {
-  const { archive } = getNadoEndpoints();
-  const url = `${archive}/fills?sender=${encodeURIComponent(sender)}&subaccount_name=${encodeURIComponent(subaccountName)}`;
+  try {
+    const { archive } = getNadoEndpoints();
+    const url = `${archive}/fills?sender=${encodeURIComponent(sender)}&subaccount_name=${encodeURIComponent(subaccountName)}`;
 
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-  });
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch past trade fills: ${response.status} ${response.statusText}`);
+    if (response.ok) {
+      return await response.json();
+    }
+  } catch (err) {
+    console.warn('[NadoAPI] Failed to fetch past trade fills:', err);
   }
 
-  return response.json();
+  return [];
 }
 
 /**

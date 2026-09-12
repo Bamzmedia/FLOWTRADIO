@@ -49,12 +49,12 @@ export default function MarketsPage() {
   const [activeCategory, setActiveCategory] = useState<'all' | 'trending' | 'gainers' | 'losers' | 'watchlist'>('all');
   const [favorites, setFavorites] = useState<string[]>(['BTC', 'ETH']);
 
-  // Subscribe to live Nado WebSocket market feeds for SOL-PERP (1), BTC-PERP (2), ETH-PERP (4)
-  const { trades: liveTrades } = useNadoMarketData([1, 2, 4]);
+  // Subscribe to live Nado WebSocket market feeds for SOL-PERP (8), BTC-PERP (2), ETH-PERP (4)
+  const { trades: liveTrades } = useNadoMarketData([8, 2, 4]);
 
   // Update market prices instantly whenever live WebSocket trade fills arrive
   useEffect(() => {
-    const productSymbolMap: Record<number, string> = { 1: 'SOL', 2: 'BTC', 4: 'ETH' };
+    const productSymbolMap: Record<number, string> = { 8: 'SOL', 2: 'BTC', 4: 'ETH' };
     
     Object.entries(liveTrades).forEach(([pIdStr, tradeList]) => {
       const pId = Number(pIdStr);
