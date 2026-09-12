@@ -16,19 +16,21 @@ export function getNadoEndpoints() {
   const env = getNadoEnv();
   if (env === 'mainnet') {
     return {
-      gateway: 'https://api.prod.nado.xyz/gateway/v1',
-      wsV1: 'wss://api.prod.nado.xyz/gateway/v1/ws',
-      wsV2: 'wss://api.prod.nado.xyz/gateway/ws/v2',
+      gateway: 'https://gateway.prod.nado.xyz/v1',
+      wsSubscribe: 'wss://gateway.prod.nado.xyz/v1/subscribe',
+      wsV1: 'wss://gateway.prod.nado.xyz/v1/ws',
+      wsV2: 'wss://gateway.prod.nado.xyz/ws/v2',
       archive: 'https://archive.prod.nado.xyz/v1',
-      ws: 'wss://api.prod.nado.xyz/gateway/v1/ws',
+      ws: 'wss://gateway.prod.nado.xyz/v1/subscribe',
     };
   }
   return {
-    gateway: 'https://api.test.nado.xyz/gateway/v1',
-    wsV1: 'wss://api.test.nado.xyz/gateway/v1/ws',
-    wsV2: 'wss://api.test.nado.xyz/gateway/ws/v2',
+    gateway: 'https://gateway.test.nado.xyz/v1',
+    wsSubscribe: 'wss://gateway.test.nado.xyz/v1/subscribe',
+    wsV1: 'wss://gateway.test.nado.xyz/v1/ws',
+    wsV2: 'wss://gateway.test.nado.xyz/ws/v2',
     archive: 'https://archive.test.nado.xyz/v1',
-    ws: 'wss://api.test.nado.xyz/gateway/v1/ws',
+    ws: 'wss://gateway.test.nado.xyz/v1/subscribe',
   };
 }
 
@@ -209,3 +211,86 @@ export async function fetchPastFills(
 
   return response.json();
 }
+
+/**
+ * Fetch live orderbook liquidity snapshot from Nado sequencer
+ */
+export async function fetchNadoLiquidity(productId: number, depth: number = 10): Promise<{ bids: [string, string][]; asks: [string, string][]; timestamp?: string }> {
+  const { gateway } = getNadoEndpoints();
+  try {
+    const res = await fetch(`${gateway}/query?type=market_liquidity&product_id=${productId}&depth=${depth}`, { cache: 'no-store' });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.status === 'success' && json.data) {
+        return json.data;
+      }
+    }
+  } catch (err) {
+    console.warn(`[NadoAPI] Failed to fetch liquidity for product ${productId}:`, err);
+  }
+  return { bids: [], asks: [] };
+}
+
+/**
+ * Fetch live market best bid and ask from Nado sequencer
+ */
+export async function fetchNadoMarketPrice(productId: number): Promise<{ bid: number; ask: number; mid: number } | null> {
+  const { gateway } = getNadoEndpoints();
+  try {
+    const res = await fetch(`${gateway}/query?type=market_price&product_id=${productId}`, { cache: 'no-store' });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.status === 'success' && json.data) {
+        const bid = parseFloat(json.data.bid_x18) / 1e18;
+        const ask = parseFloat(json.data.ask_x18) / 1e18;
+        const mid = (bid + ask) / 2;
+        return { bid, ask, mid };
+      }
+    }
+  } catch (err) {
+    console.warn(`[NadoAPI] Failed to fetch market price for product ${productId}:`, err);
+  }
+  return null;
+}
+
+/**
+ * Fetch all products from Nado sequencer including live on-chain Pyth oracle prices
+ */
+export async function fetchNadoAllProducts(): Promise<{
+  spot_products: any[];
+  perp_products: Array<{ product_id: number; oracle_price_x18: string; risk: any; state: any }>;
+} | null> {
+  const { gateway } = getNadoEndpoints();
+  try {
+    const res = await fetch(`${gateway}/query?type=all_products`, { cache: 'no-store' });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.status === 'success' && json.data) {
+        return json.data;
+      }
+    }
+  } catch (err) {
+    console.warn('[NadoAPI] Failed to fetch all products:', err);
+  }
+  return null;
+}
+
+/**
+ * Fetch full subaccount info from Nado sequencer including spot balances and perp positions
+ */
+export async function fetchNadoSubaccountInfo(subaccountHex: string): Promise<any> {
+  const { gateway } = getNadoEndpoints();
+  try {
+    const res = await fetch(`${gateway}/query?type=subaccount_info&subaccount=${encodeURIComponent(subaccountHex)}`, { cache: 'no-store' });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.status === 'success' && json.data) {
+        return json.data;
+      }
+    }
+  } catch (err) {
+    console.warn('[NadoAPI] Failed to fetch subaccount info:', err);
+  }
+  return null;
+}
+

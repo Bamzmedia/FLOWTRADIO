@@ -57,13 +57,13 @@ class NadoWebSocketClient {
     }
 
     this.isExplicitlyClosed = false;
-    const { wsV2 } = getNadoEndpoints();
+    const { wsSubscribe } = getNadoEndpoints();
     this.setStatus('CONNECTING');
     
-    console.log(`[NadoWS-v2] Connecting to concurrent-dispatch endpoint: ${wsV2}...`);
+    console.log(`[NadoWS] Connecting to subscription endpoint: ${wsSubscribe}...`);
     
     try {
-      this.ws = new WebSocket(wsV2);
+      this.ws = new WebSocket(wsSubscribe);
       this.setupEventHandlers();
     } catch (error) {
       console.error('[NadoWS-v2] Connection error:', error);
@@ -345,13 +345,13 @@ class NadoWebSocketClient {
   private startHeartbeat(): void {
     if (this.pingIntervalId) clearInterval(this.pingIntervalId);
 
-    // Gateway timeout is 30 seconds. Send ping frame every 30 seconds with id 10.
+    // Gateway timeout is 30 seconds. Send ping frame every 20 seconds.
     this.pingIntervalId = setInterval(() => {
       if (this.status === 'CONNECTED') {
-        const pingMsg = { method: 'ping' as const, id: 10 };
+        const pingMsg = { method: 'ping' as const, id: Math.floor(Date.now() / 1000) };
         this.send(pingMsg);
       }
-    }, 30000);
+    }, 20000);
   }
 
   private handleDisconnect(): void {

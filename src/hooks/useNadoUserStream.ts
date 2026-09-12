@@ -5,6 +5,7 @@ import { ethers } from 'ethers';
 import { useAppKitAccount, useAppKitProvider } from '@reown/appkit/react';
 import { useNadoWebSocket } from './useNadoWebSocket';
 import { WSOrderUpdate, WSFillUpdate, WSSubaccountInfoUpdate, WSPositionChangeUpdate } from '../types/nado';
+import { fetchNadoSubaccountInfo } from '../nado/nadoApi';
 
 // Converts a base-18 fixed-point integer string (X18) to a float
 const parseX18 = (val: string | number): number => {
@@ -203,6 +204,67 @@ export function useNadoUserStream() {
       }
     }
   }, [isConnected, address, ws.isConnected, isAuthenticated, isAuthenticating, authenticateUser]);
+
+  // Fetch initial subaccount snapshot via REST upon wallet connection
+  useEffect(() => {
+    if (!isConnected || !address) return;
+    let isMounted = true;
+    const senderBytes32 = formatSubaccountSender(address, 'default');
+
+    const syncSubaccount = async () => {
+      try {
+        const data = await fetchNadoSubaccountInfo(senderBytes32);
+        if (!isMounted || !data) return;
+
+        let totalCollateral = 0;
+        if (data.spot_balances && Array.isArray(data.spot_balances)) {
+          // Product 0 is Primary Collateral (USDC)
+          const usdcBalance = data.spot_balances.find((b: any) => b.product_id === 0);
+          if (usdcBalance && usdcBalance.balance?.amount) {
+            totalCollateral = parseX18(usdcBalance.balance.amount);
+          }
+        }
+
+        const newPositions: Record<number, ParsedSubaccountPosition> = {};
+        if (data.perp_balances && Array.isArray(data.perp_balances)) {
+          data.perp_balances.forEach((pb: any) => {
+            const rawAmount = parseX18(pb.balance?.amount || 0);
+            if (rawAmount !== 0) {
+              newPositions[pb.product_id] = {
+                productId: pb.product_id,
+                amount: rawAmount,
+                entryPrice: parseX18(pb.balance?.entry_price || 0),
+                realizedPnl: parseX18(pb.balance?.realized_pnl || 0),
+                unrealizedPnl: parseX18(pb.balance?.unrealized_pnl || 0),
+                marginUsage: 0,
+                timestamp: Date.now(),
+              };
+            }
+          });
+        }
+
+        setSubaccountInfo((prev) => ({
+          collateral: totalCollateral,
+          freeCollateral: totalCollateral,
+          marginUsage: prev?.marginUsage || 0,
+          timestamp: Date.now(),
+        }));
+
+        if (Object.keys(newPositions).length > 0) {
+          setPositions(newPositions);
+        }
+      } catch (err) {
+        console.warn('[useNadoUserStream] REST subaccount query failed:', err);
+      }
+    };
+
+    syncSubaccount();
+    const timer = setInterval(syncSubaccount, 15000);
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, [isConnected, address]);
 
   // Subscribe to private streams upon authentication
   useEffect(() => {
