@@ -2,7 +2,23 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Wallet, User, LogOut, Settings, Menu, X, Copy, Check, ExternalLink, AlertTriangle } from 'lucide-react';
+import { 
+  Wallet, 
+  User, 
+  LogOut, 
+  Settings, 
+  Menu, 
+  X, 
+  Copy, 
+  Check, 
+  ExternalLink, 
+  AlertTriangle,
+  LayoutDashboard,
+  TrendingUp,
+  BarChart2,
+  Coins,
+  Trophy
+} from 'lucide-react';
 import { useLocalization } from '@/components/LocalizationContext';
 import { useWallet, Network } from '@/components/WalletContext';
 import SettingsModal from './SettingsModal';
@@ -59,11 +75,26 @@ export default function Navbar() {
           </Link>
           
           <div className="hidden lg:flex gap-6 text-sm text-gray-400 font-medium">
-            <Link href="/" className="hover:text-primary transition-colors">{t('dashboard')}</Link>
-            <Link href="/trade" className="hover:text-primary transition-colors">{t('trade')}</Link>
-            <Link href="/markets" className="hover:text-primary transition-colors">{t('markets')}</Link>
-            <Link href="/earn" className="hover:text-primary transition-colors">{t('earn')}</Link>
-            <Link href="/leaderboard" className="hover:text-primary transition-colors">Leaderboard</Link>
+            <Link href="/" className="hover:text-primary transition-colors flex items-center gap-1.5">
+              <LayoutDashboard size={15} />
+              <span>{t('dashboard')}</span>
+            </Link>
+            <Link href="/trade" className="hover:text-primary transition-colors flex items-center gap-1.5">
+              <TrendingUp size={15} />
+              <span>{t('trade')}</span>
+            </Link>
+            <Link href="/markets" className="hover:text-primary transition-colors flex items-center gap-1.5">
+              <BarChart2 size={15} />
+              <span>{t('markets')}</span>
+            </Link>
+            <Link href="/earn" className="hover:text-primary transition-colors flex items-center gap-1.5">
+              <Coins size={15} />
+              <span>{t('earn')}</span>
+            </Link>
+            <Link href="/leaderboard" className="hover:text-primary transition-colors flex items-center gap-1.5">
+              <Trophy size={15} />
+              <span>Leaderboard</span>
+            </Link>
           </div>
         </div>
 
@@ -94,10 +125,10 @@ export default function Navbar() {
           {!mounted ? (
             <button 
               disabled
-              className="flex items-center gap-2 bg-primary/30 text-background/80 px-5 py-2 rounded-full font-bold transition-all cursor-wait opacity-80"
+              className="flex items-center gap-2 bg-primary/30 text-background/80 px-4 sm:px-5 py-2 rounded-full font-bold transition-all cursor-wait opacity-80"
             >
               <Wallet size={18} />
-              <span className="hidden sm:inline">Connect Wallet</span>
+              <span className="text-xs sm:text-sm font-bold">Connect Wallet</span>
             </button>
           ) : isConnected ? (
             <div className="relative">
@@ -105,7 +136,9 @@ export default function Navbar() {
                 onClick={() => setShowProfileMenu(!showProfileMenu)}
                 className={`flex items-center gap-2 bg-black/40 border ${isWrongNetwork ? 'border-amber-500/40 hover:border-amber-500/70' : 'border-primary/30 hover:border-primary/60'} text-white px-4 py-1.5 rounded-full font-bold transition-all`}
               >
-                <div className={`w-5 h-5 rounded-full ${isWrongNetwork ? 'bg-gradient-to-tr from-amber-400 to-red-500' : 'bg-gradient-to-tr from-green-400 to-blue-500'}`} />
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center ${isWrongNetwork ? 'bg-gradient-to-tr from-amber-400 to-red-500' : 'bg-gradient-to-tr from-green-400 to-blue-500'}`}>
+                  <User size={11} className="text-black" />
+                </div>
                 <span className="text-sm font-mono">{displayAddress || (address ? `${address.slice(0, 6)}...${address.slice(-4)}` : '')}</span>
                 <span className={`text-xs px-2 py-0.5 rounded-full ml-1 ${isWrongNetwork ? 'bg-amber-500/20 text-amber-300 font-bold' : 'bg-primary/10 text-primary'}`}>
                   {isWrongNetwork ? 'Wrong Network' : network}
@@ -176,10 +209,10 @@ export default function Navbar() {
           ) : (
             <button 
               onClick={() => setShowWalletModal(true)}
-              className="flex items-center gap-2 bg-primary hover:bg-primary/80 text-background px-5 py-2 rounded-full font-bold transition-all shadow-[0_0_15px_rgba(0,240,255,0.4)]"
+              className="flex items-center gap-2 bg-primary hover:bg-primary/80 text-background px-4 sm:px-5 py-2 rounded-full font-bold transition-all shadow-[0_0_15px_rgba(0,240,255,0.4)] cursor-pointer"
             >
               <Wallet size={18} />
-              <span className="hidden sm:inline">{t('connect')}</span>
+              <span className="text-xs sm:text-sm font-bold">{t('connect') || 'Connect Wallet'}</span>
             </button>
           )}
 
@@ -195,13 +228,59 @@ export default function Navbar() {
 
       {/* Mobile Navigation Menu */}
       {isMobileMenuOpen && (
-        <div className="lg:hidden fixed inset-0 top-[72px] bg-background/95 backdrop-blur-xl z-30 flex flex-col p-6 animate-in slide-in-from-top-4 duration-200 border-t border-white/5">
-          <div className="flex flex-col gap-6 text-lg font-bold">
-            <Link href="/" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-2 rounded-xl hover:bg-white/5">{t('dashboard')}</Link>
-            <Link href="/trade" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-2 rounded-xl hover:bg-white/5">{t('trade')}</Link>
-            <Link href="/markets" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-2 rounded-xl hover:bg-white/5">{t('markets')}</Link>
-            <Link href="/earn" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-2 rounded-xl hover:bg-white/5">{t('earn')}</Link>
-            <Link href="/leaderboard" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-2 rounded-xl hover:bg-white/5">Leaderboard</Link>
+        <div className="lg:hidden fixed inset-0 top-[72px] bg-background/95 backdrop-blur-xl z-30 flex flex-col p-6 animate-in slide-in-from-top-4 duration-200 border-t border-white/5 justify-between pb-12 overflow-y-auto">
+          <div className="flex flex-col gap-3 text-lg font-bold">
+            <Link href="/" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-3 rounded-xl hover:bg-white/5 flex items-center gap-3">
+              <LayoutDashboard size={20} className="text-primary" />
+              <span>{t('dashboard')}</span>
+            </Link>
+            <Link href="/trade" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-3 rounded-xl hover:bg-white/5 flex items-center gap-3">
+              <TrendingUp size={20} className="text-primary" />
+              <span>{t('trade')}</span>
+            </Link>
+            <Link href="/markets" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-3 rounded-xl hover:bg-white/5 flex items-center gap-3">
+              <BarChart2 size={20} className="text-primary" />
+              <span>{t('markets')}</span>
+            </Link>
+            <Link href="/earn" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-3 rounded-xl hover:bg-white/5 flex items-center gap-3">
+              <Coins size={20} className="text-primary" />
+              <span>{t('earn')}</span>
+            </Link>
+            <Link href="/leaderboard" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-primary transition-colors p-3 rounded-xl hover:bg-white/5 flex items-center gap-3">
+              <Trophy size={20} className="text-primary" />
+              <span>Leaderboard</span>
+            </Link>
+          </div>
+
+          {/* Mobile Wallet & Action Section */}
+          <div className="pt-6 border-t border-white/10 flex flex-col gap-3 mt-6">
+            {isConnected ? (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between p-3 bg-black/40 rounded-xl border border-white/10">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-green-400 to-blue-500 flex items-center justify-center">
+                      <User size={14} className="text-black" />
+                    </div>
+                    <span className="font-mono text-sm">{displayAddress || address}</span>
+                  </div>
+                  <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold">{network}</span>
+                </div>
+                <button
+                  onClick={() => { disconnect(); setIsMobileMenuOpen(false); }}
+                  className="w-full py-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
+                >
+                  <LogOut size={16} /> Disconnect Wallet
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => { setShowWalletModal(true); setIsMobileMenuOpen(false); }}
+                className="w-full py-3 bg-primary hover:bg-primary/90 text-background rounded-xl font-bold flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(0,240,255,0.4)] transition-all"
+              >
+                <Wallet size={18} />
+                <span>Connect Wallet</span>
+              </button>
+            )}
           </div>
         </div>
       )}

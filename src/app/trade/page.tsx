@@ -83,7 +83,7 @@ const MARKETS: MarketConfig[] = [
 
 export default function ProTradePage() {
   const { t, formatCurrency } = useLocalization();
-  const { isConnected, balance, addTransaction, address: walletContextAddress } = useWallet();
+  const { isConnected, balance, addTransaction, address: walletContextAddress, connect } = useWallet();
   const { address: appKitAddress } = useAppKitAccount();
   const { walletProvider } = useAppKitProvider('eip155');
   
@@ -1527,14 +1527,15 @@ export default function ProTradePage() {
 
             <button 
               disabled={isSubmitting}
-              onClick={handleExecute}
+              onClick={isConnected ? handleExecute : () => connect()}
               className={`w-full mt-6 font-bold py-3 rounded-xl transition-all duration-300 text-background shadow-lg flex items-center justify-center gap-2 ${
                 isSubmitting ? 'opacity-50 cursor-not-allowed bg-gray-500' :
+                !isConnected ? 'bg-primary hover:bg-primary/90 text-background shadow-[0_0_15px_rgba(0,240,255,0.4)] cursor-pointer' :
                 tradeDirection === 'long' ? 'bg-green-500 hover:bg-green-400 shadow-green-500/20' : 'bg-red-500 hover:bg-red-400 shadow-red-500/20'
               }`}
             >
               {isSubmitting && <Loader2 size={16} className="animate-spin" />}
-              {isConnected ? `Execute ${tradeDirection === 'long' ? 'Long' : 'Short'} (${execMode})` : `${t('connect')} Wallet`}
+              {isConnected ? `Execute ${tradeDirection === 'long' ? 'Long' : 'Short'} (${execMode})` : `Connect Wallet`}
             </button>
             
             <div className="flex items-center justify-between mt-4">
