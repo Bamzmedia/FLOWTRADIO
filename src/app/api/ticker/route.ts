@@ -16,7 +16,7 @@ export async function GET(request: Request) {
   let volume24h = '0';
   let klines: any[] = [];
 
-  // 0. Primary: Fetch Live Price and Oracle from Nado Gateway
+  // 0. Primary: Fetch Live Price and 24h stats from Nado Gateway & Archive
   try {
     const productMap: Record<string, number> = {
       'SOLUSDT': 8, 'SOL-PERP': 8, 'SOL': 8,
@@ -24,27 +24,67 @@ export async function GET(request: Request) {
       'ETHUSDT': 4, 'ETH-PERP': 4, 'ETH': 4,
     };
     const pId = productMap[symbol] || 8;
-    const { gateway } = getNadoEndpoints();
-    const nadoRes = await fetch(`${gateway}/query?type=market_price&product_id=${pId}`, {
-      headers: { 'Accept-Encoding': 'gzip, deflate, br' },
-      cache: 'no-store',
-    });
-    if (nadoRes.ok) {
-      const nData = await nadoRes.json();
+    const { gateway, archive } = getNadoEndpoints();
+
+    const [nadoRes, ohlcvRes] = await Promise.allSettled([
+      fetch(`${gateway}/query?type=market_price&product_id=${pId}`, {
+        headers: { 'Accept-Encoding': 'gzip, deflate, br' },
+        cache: 'no-store',
+      }),
+      fetch(archive, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept-Encoding': 'gzip, deflate, br',
+        },
+        body: JSON.stringify({
+          candlesticks: { product_id: pId, granularity: 3600, limit: 24 },
+        }),
+      }),
+    ]);
+
+    if (nadoRes.status === 'fulfilled' && nadoRes.value.ok) {
+      const nData = await nadoRes.value.json();
       if (nData.status === 'success' && nData.data) {
         const bid = parseFloat(nData.data.bid_x18) / 1e18;
         const ask = parseFloat(nData.data.ask_x18) / 1e18;
         if (bid > 0 && ask > 0) {
           price = Math.round(((bid + ask) / 2) * 100) / 100;
-          high24h = Math.round(price * 1.034 * 100) / 100;
-          low24h = Math.round(price * 0.968 * 100) / 100;
-          change24h = '+2.85';
-          volume24h = Math.round(price * 1250000).toLocaleString(undefined, { maximumFractionDigits: 0 });
         }
       }
     }
+
+    if (ohlcvRes.status === 'fulfilled' && ohlcvRes.value.ok) {
+      const cData = await ohlcvRes.value.json();
+      if (Array.isArray(cData.candlesticks) && cData.candlesticks.length > 0) {
+        const bars = cData.candlesticks.map((c: any) => ({
+          time: parseInt(c.timestamp, 10),
+          open: parseFloat(c.open_x18) / 1e18,
+          high: parseFloat(c.high_x18) / 1e18,
+          low: parseFloat(c.low_x18) / 1e18,
+          close: parseFloat(c.close_x18) / 1e18,
+          volume: parseFloat(c.volume) / 1e18,
+        }));
+        klines = bars;
+        if (price === 0 && bars.length > 0) {
+          price = bars[bars.length - 1].close;
+        }
+        const highs = bars.map((b: any) => b.high);
+        const lows = bars.map((b: any) => b.low);
+        const totalVol = bars.reduce((acc: number, b: any) => acc + (b.volume || 0), 0);
+        const first = bars[0].open || bars[0].close;
+        const last = bars[bars.length - 1].close;
+        const pct = first > 0 ? ((last - first) / first) * 100 : 0;
+
+        high24h = Math.round(Math.max(...highs) * 100) / 100;
+        low24h = Math.round(Math.min(...lows) * 100) / 100;
+        change24h = (pct >= 0 ? '+' : '') + pct.toFixed(2);
+        const assetSymbol = symbol.replace('-PERP', '').replace('USDT', '');
+        volume24h = totalVol > 0 ? `${totalVol.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${assetSymbol}` : `0 ${assetSymbol}`;
+      }
+    }
   } catch (nadoErr) {
-    console.warn('[TickerAPI] Nado query failed, trying Binance...', nadoErr);
+    console.warn('[TickerAPI] Nado query failed:', nadoErr);
   }
 
   // 1. Try Binance REST if Nado did not return

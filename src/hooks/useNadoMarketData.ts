@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNadoWebSocket } from './useNadoWebSocket';
 import { WSBookDepthUpdate, WSTradeUpdate, WSCandlestickUpdate, OHLCVBar } from '../types/nado';
-import { fetchNadoLiquidity } from '../nado/nadoApi';
+import { fetchNadoLiquidity, fetchNadoMarketTrades, fetchHistoricalOHLCV } from '../nado/nadoApi';
 
 export interface OrderBookState {
   bids: [number, number][]; // [price, size]
@@ -63,21 +63,27 @@ export function useNadoMarketData(productIds: number[], candlestickGranularity: 
   const orderBooksRef = useRef<Record<number, OrderBookState>>({});
   orderBooksRef.current = orderBooks;
 
-  // 1. Instant REST Order Book Snapshot hydration
+  // 1. Instant REST Order Book, Trades, and Candlestick Snapshot hydration from Nado
   useEffect(() => {
     let isMounted = true;
 
     productIds.forEach(async (productId) => {
       try {
-        const snap = await fetchNadoLiquidity(productId, 15);
+        const [snap, realTrades, ohlcv] = await Promise.allSettled([
+          fetchNadoLiquidity(productId, 15),
+          fetchNadoMarketTrades(productId, 30),
+          fetchHistoricalOHLCV(productId, '1h', 50),
+        ]);
+
         if (!isMounted) return;
-        if (snap && (snap.bids?.length > 0 || snap.asks?.length > 0)) {
-          const parsedBids = (snap.bids || [])
+
+        if (snap.status === 'fulfilled' && snap.value && (snap.value.bids?.length > 0 || snap.value.asks?.length > 0)) {
+          const parsedBids = (snap.value.bids || [])
             .map(([p, s]) => [parseX18(p), parseX18(s)] as [number, number])
             .filter(([p, s]) => p > 0 && s > 0)
             .sort((a, b) => b[0] - a[0]);
 
-          const parsedAsks = (snap.asks || [])
+          const parsedAsks = (snap.value.asks || [])
             .map(([p, s]) => [parseX18(p), parseX18(s)] as [number, number])
             .filter(([p, s]) => p > 0 && s > 0)
             .sort((a, b) => a[0] - b[0]);
@@ -90,45 +96,22 @@ export function useNadoMarketData(productIds: number[], candlestickGranularity: 
               timestamp: Date.now(),
             },
           }));
+        }
 
-          // If no trades exist yet, seed initial recent trades from genuine mid-price spread
-          setTrades((prev) => {
-            if (prev[productId] && prev[productId].length > 0) return prev;
-            const bestBid = parsedBids[0]?.[0] || 0;
-            const bestAsk = parsedAsks[0]?.[0] || 0;
-            const mid = bestBid && bestAsk ? (bestBid + bestAsk) / 2 : bestBid || bestAsk;
-            if (mid <= 0) return prev;
+        // Hydrate genuine past trades from Nado Archive API
+        if (realTrades.status === 'fulfilled' && Array.isArray(realTrades.value) && realTrades.value.length > 0) {
+          setTrades((prev) => ({
+            ...prev,
+            [productId]: realTrades.value,
+          }));
+        }
 
-            const now = Date.now();
-            const initialTrades: ParsedMarketTrade[] = [
-              {
-                price: bestAsk || mid,
-                amount: Math.round((0.5 + Math.random() * 2) * 100) / 100,
-                side: 'buy',
-                timestamp: now - 3500,
-                tradeId: `tr_${now}_1`,
-              },
-              {
-                price: bestBid || mid,
-                amount: Math.round((0.2 + Math.random() * 1.5) * 100) / 100,
-                side: 'sell',
-                timestamp: now - 8200,
-                tradeId: `tr_${now}_2`,
-              },
-              {
-                price: mid,
-                amount: Math.round((0.8 + Math.random() * 3) * 100) / 100,
-                side: 'buy',
-                timestamp: now - 15400,
-                tradeId: `tr_${now}_3`,
-              },
-            ];
-
-            return {
-              ...prev,
-              [productId]: initialTrades,
-            };
-          });
+        // Hydrate genuine candlesticks from Nado Archive API
+        if (ohlcv.status === 'fulfilled' && Array.isArray(ohlcv.value) && ohlcv.value.length > 0) {
+          setCandlesticks((prev) => ({
+            ...prev,
+            [productId]: ohlcv.value,
+          }));
         }
       } catch (err) {
         console.warn(`[useNadoMarketData] Snapshot hydration failed for ${productId}:`, err);
@@ -206,6 +189,7 @@ export function useNadoMarketData(productIds: number[], candlestickGranularity: 
 
           setTrades((prev) => {
             const list = prev[productId] || [];
+            if (list.some((t) => t.tradeId === newTrade.tradeId)) return prev;
             const updated = [newTrade, ...list].slice(0, MAX_TRADE_LOG_SIZE);
             return {
               ...prev,

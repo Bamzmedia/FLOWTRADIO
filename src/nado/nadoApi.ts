@@ -327,6 +327,73 @@ export async function fetchPastFills(
 }
 
 /**
+ * Fetch real public market trade executions from Nado Archive API.
+ */
+export async function fetchNadoMarketTrades(
+  productId: number,
+  limit: number = 30
+): Promise<Array<{
+  price: number;
+  amount: number;
+  side: 'buy' | 'sell';
+  timestamp: number;
+  tradeId: string;
+}>> {
+  try {
+    const { archive } = getNadoEndpoints();
+    const response = await fetch(archive, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept-Encoding': 'gzip, deflate, br',
+      },
+      body: JSON.stringify({
+        matches: {
+          product_ids: [productId],
+          limit,
+        },
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      const txTimestampMap: Record<string, number> = {};
+      if (Array.isArray(data.txs)) {
+        data.txs.forEach((tx: any) => {
+          if (tx.submission_idx && tx.timestamp) {
+            txTimestampMap[tx.submission_idx] = parseInt(tx.timestamp, 10);
+          }
+        });
+      }
+
+      if (Array.isArray(data.matches)) {
+        return data.matches
+          .filter((m: any) => m.is_taker)
+          .map((m: any) => {
+            const rawBase = Math.abs(parseFloat(m.base_filled || '0') / 1e18);
+            const rawQuote = Math.abs(parseFloat(m.quote_filled || '0') / 1e18);
+            const price = rawBase > 0 ? Math.round((rawQuote / rawBase) * 100) / 100 : 0;
+            const side = parseFloat(m.base_filled || '0') >= 0 ? ('buy' as const) : ('sell' as const);
+            const rawTs = txTimestampMap[m.submission_idx];
+            const timestamp = typeof rawTs === 'number' ? rawTs : Math.floor(Date.now() / 1000);
+            return {
+              price,
+              amount: Math.round(rawBase * 100) / 100,
+              side,
+              timestamp,
+              tradeId: m.digest || `match_${m.submission_idx}`,
+            };
+          })
+          .filter((t: any) => t.price > 0 && t.amount > 0);
+      }
+    }
+  } catch (err) {
+    console.warn(`[NadoAPI] Failed to fetch market trades for product ${productId}:`, err);
+  }
+  return [];
+}
+
+/**
  * Fetch live orderbook liquidity snapshot from Nado sequencer
  */
 export async function fetchNadoLiquidity(productId: number, depth: number = 10): Promise<{ bids: [string, string][]; asks: [string, string][]; timestamp?: string }> {

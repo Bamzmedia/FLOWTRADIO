@@ -10,7 +10,7 @@ import { useNadoWebSocket } from '@/hooks/useNadoWebSocket';
 import { useNadoMarketData } from '@/hooks/useNadoMarketData';
 import { ethers } from 'ethers';
 import { useAppKitAccount, useAppKitProvider } from '@reown/appkit/react';
-import { placeOrder, fetchNadoAllProducts, getOrderNonce, cancelNadoOrder } from '@/nado/nadoApi';
+import { placeOrder, fetchNadoAllProducts, getOrderNonce, cancelNadoOrder, fetchHistoricalOHLCV } from '@/nado/nadoApi';
 import { formatSubaccountSender, useNadoUserStream } from '@/hooks/useNadoUserStream';
 import SubaccountModal from '@/components/SubaccountModal';
 import { NadoOrder } from '@/types/nado';
@@ -59,7 +59,7 @@ const MARKETS: MarketConfig[] = [
     pythId: '0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d',
     binanceSymbol: 'SOLUSDT',
     decimals: 2,
-    initialPrice: 102.05,
+    initialPrice: 118.70,
   },
   {
     id: 'BTC-PERP',
@@ -94,7 +94,6 @@ export default function ProTradePage() {
   // Market State
   const [activeMarket, setActiveMarket] = useState<MarketConfig>(MARKETS[0]);
   const [price, setPrice] = useState<number>(MARKETS[0].initialPrice);
-  const [oraclePrice, setOraclePrice] = useState<number>(MARKETS[0].initialPrice);
   const [chartResolution, setChartResolution] = useState<'1m' | '5m' | '15m' | '1H' | '4H' | '1D'>('1H');
   const [tickerStats, setTickerStats] = useState({
     change24h: '+0.00',
@@ -266,116 +265,17 @@ export default function ProTradePage() {
 
   // Real-time Recent Trades feed from live Nado WebSocket & REST feed
   const liveTradeList = liveTradesMap[activeProductId] || [];
-  const recentTrades = liveTradeList.length > 0
-    ? liveTradeList.map((t) => ({
-        price: t.price,
-        size: t.amount,
-        time: new Date(t.timestamp > 1e11 ? t.timestamp : t.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        type: t.side,
-      }))
-    : [
-        { price: Math.round(price * 1.0002 * 100) / 100, size: 3.25, time: new Date(Date.now() - 3200).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), type: 'buy' as const },
-        { price: Math.round(price * 0.9998 * 100) / 100, size: 1.84, time: new Date(Date.now() - 9500).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), type: 'sell' as const },
-        { price: Math.round(price * 1.0001 * 100) / 100, size: 6.40, time: new Date(Date.now() - 18000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), type: 'buy' as const },
-      ];
+  const recentTrades = liveTradeList.map((t) => ({
+    price: t.price,
+    size: t.amount,
+    time: new Date(t.timestamp > 1e11 ? t.timestamp : t.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    type: t.side,
+  }));
 
   const maxAskTotal = Math.max(...orderBookAsks.map((a) => a.total), 1);
   const maxBidTotal = Math.max(...orderBookBids.map((b) => b.total), 1);
 
-  // Helper: Fetch Pyth Price via REST, fallback to Binance
-  const fetchPythPrice = async (pythId: string, binanceSymbol: string) => {
-    try {
-      const response = await fetch(`https://hermes.pyth.network/v2/updates/price/latest?ids[]=${pythId}`);
-      if (response.status === 200) {
-        const data = await response.json();
-        if (data && data.parsed && data.parsed.length > 0) {
-          const parsed = data.parsed[0];
-          const rawPrice = BigInt(parsed.price.price);
-          const expo = parsed.price.expo;
-          const finalPrice = Number(rawPrice) * Math.pow(10, expo);
-          return finalPrice;
-        }
-      }
-    } catch (e) {
-      console.error("Failed to fetch latest price from Pyth Hermes API", e);
-    }
-
-    // Fallback: Fetch price directly from Binance if Pyth fails (e.g. 401 Unauthorized)
-    try {
-      const binanceResponse = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${binanceSymbol}`);
-      if (binanceResponse.ok) {
-        const ticker = await binanceResponse.json();
-        return parseFloat(ticker.price);
-      }
-    } catch (binanceErr) {
-      console.error("Binance price fallback query failed", binanceErr);
-    }
-    return null;
-  };
-
-  // Helper: Fetch Binance Ticker Data
-  const fetchBinanceTicker = async (symbol: string) => {
-    try {
-      const response = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`);
-      const ticker = await response.json();
-      return {
-        change24h: parseFloat(ticker.priceChangePercent).toFixed(2),
-        high24h: parseFloat(ticker.highPrice),
-        low24h: parseFloat(ticker.lowPrice),
-        volume24h: parseFloat(ticker.volume).toLocaleString(undefined, { maximumFractionDigits: 0 }),
-      };
-    } catch (e) {
-      console.error("Failed to fetch Binance ticker", e);
-      return null;
-    }
-  };
-
   const currentCandleRef = useRef<{ time: number; open: number; high: number; low: number; close: number } | null>(null);
-
-  // Helper: Fast Instant Candle Generator (starts from current active session)
-  const generateInstantCandles = (interval: string, basePrice: number) => {
-    const bars = [];
-    const step = interval === '1m' ? 60 : interval === '5m' ? 300 : interval === '15m' ? 900 : interval === '1H' ? 3600 : interval === '4H' ? 14400 : 86400;
-    const nowRounded = Math.floor(Math.floor(Date.now() / 1000) / step) * step;
-    let curr = basePrice * 0.995;
-    // Limit to recent session bars (30 bars) so time starts from active live epoch
-    for (let i = 30; i >= 0; i--) {
-      const time = (nowRounded - (i * step)) as any;
-      const open = curr;
-      const change = (Math.sin(i * 0.4) * 0.002 + (Math.random() - 0.48) * 0.004) * basePrice;
-      const close = Math.max(0.01, open + change);
-      const high = Math.max(open, close) + Math.random() * (basePrice * 0.002);
-      const low = Math.min(open, close) - Math.random() * (basePrice * 0.002);
-      bars.push({ time, open, high, low, close });
-      curr = close;
-    }
-    return bars;
-  };
-
-  // Helper: Fetch Recent Klines aligned with active session
-  const fetchHistoricalData = async (symbol: string, interval: string, basePrice: number) => {
-    const binanceInterval = interval.toLowerCase();
-    const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${binanceInterval}&limit=35`;
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 1200);
-      const response = await fetch(url, { signal: controller.signal });
-      clearTimeout(timer);
-      if (response.ok) {
-        const klines = await response.json();
-        return klines.map((k: any) => ({
-          time: k[0] / 1000,
-          open: parseFloat(k[1]),
-          high: parseFloat(k[2]),
-          low: parseFloat(k[3]),
-          close: parseFloat(k[4]),
-        }));
-      }
-    } catch {
-      // Fallback to instant generator
-    }
-    return null;
-  };
 
   // Live Multi-Source Price Sync & Micro-Tick Real-Time Stream
   useEffect(() => {
@@ -417,46 +317,29 @@ export default function ProTradePage() {
       }
     };
 
-    // 1. Sync live price, stats, and on-chain Pyth oracle price directly
-    const syncLivePriceAndOracle = async () => {
-      // Primary: Internal server ticker route (queries Nado gateway / market_price)
+    // 1. Sync live price & stats directly from Nado Gateway & Archive
+    const syncLivePriceAndStats = async () => {
       try {
         const res = await fetch(`/api/ticker?symbol=${activeMarket.id}&product_id=${activeProductId}`);
         if (res.ok) {
           const d = await res.json();
           if (d.price && d.price > 0 && isMounted) {
             applyPriceUpdate(d.price);
-            setTickerStats({
-              change24h: d.change24h || '+2.85',
-              high24h: d.high24h || Math.round(d.price * 1.034 * 100) / 100,
-              low24h: d.low24h || Math.round(d.price * 0.968 * 100) / 100,
-              volume24h: d.volume24h || Math.round(d.price * 1250000).toLocaleString(),
-            });
+            setTickerStats((prev) => ({
+              change24h: d.change24h || prev.change24h,
+              high24h: d.high24h || prev.high24h,
+              low24h: d.low24h || prev.low24h,
+              volume24h: d.volume24h || prev.volume24h,
+            }));
           }
         }
       } catch (err) {
         console.warn('[TradePage] Ticker sync error:', err);
       }
-
-      // Secondary: Query live on-chain Pyth oracle price directly from Nado Gateway
-      try {
-        const allProds = await fetchNadoAllProducts();
-        if (allProds?.perp_products && isMounted) {
-          const found = allProds.perp_products.find((p: any) => p.product_id === activeProductId);
-          if (found && found.oracle_price_x18) {
-            const op = parseFloat(found.oracle_price_x18) / 1e18;
-            if (op > 0) {
-              setOraclePrice(Math.round(op * 100) / 100);
-            }
-          }
-        }
-      } catch (oErr) {
-        console.warn('[TradePage] Oracle price query error:', oErr);
-      }
     };
 
-    syncLivePriceAndOracle();
-    const pollInterval = setInterval(syncLivePriceAndOracle, 4000);
+    syncLivePriceAndStats();
+    const pollInterval = setInterval(syncLivePriceAndStats, 4000);
 
     // 4. Continuous High-Frequency Micro-Tick Streamer (every 600ms)
     const tickInterval = setInterval(() => {
@@ -514,11 +397,12 @@ export default function ProTradePage() {
     chartRef.current = chart;
     seriesRef.current = candlestickSeries;
 
-    // Instant zero-delay initial load on mount
+    // Initial placeholder on mount until Nado Archive responds
     const basePrice = price > 0 ? price : activeMarket.initialPrice;
-    const instantData = generateInstantCandles(chartResolution, basePrice);
-    candlestickSeries.setData(instantData);
-    currentCandleRef.current = { ...instantData[instantData.length - 1] };
+    const nowSec = Math.floor(Date.now() / 1000);
+    const initialBar = { time: nowSec as any, open: basePrice, high: basePrice, low: basePrice, close: basePrice };
+    candlestickSeries.setData([initialBar]);
+    currentCandleRef.current = initialBar;
     chart.timeScale().fitContent();
 
     const handleResize = () => {
@@ -536,31 +420,46 @@ export default function ProTradePage() {
     };
   }, []);
 
-  // Fetch and Load Historical Chart Data Instantly + Background Sync
+  // Fetch and Load Historical Chart Data directly from Nado Archive API
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current) return;
     
     let isMounted = true;
-    const basePrice = price > 0 ? price : activeMarket.initialPrice;
 
-    // 1. Instant 0ms render immediately
-    const instantData = generateInstantCandles(chartResolution, basePrice);
-    seriesRef.current.setData(instantData);
-    currentCandleRef.current = { ...instantData[instantData.length - 1] };
-    chartRef.current.timeScale().fitContent();
-
-    // 2. Non-blocking background fetch
-    fetchHistoricalData(activeMarket.binanceSymbol, chartResolution, basePrice).then((data) => {
+    fetchHistoricalOHLCV(activeProductId, chartResolution, 100).then((data) => {
       if (isMounted && data && data.length > 0 && seriesRef.current) {
         seriesRef.current.setData(data);
         currentCandleRef.current = { ...data[data.length - 1] };
+        chartRef.current?.timeScale().fitContent();
+
+        const latest = data[data.length - 1];
+        if (latest && latest.close > 0) {
+          setPrice(latest.close);
+        }
+
+        const recent24 = data.slice(-24);
+        if (recent24.length > 0) {
+          const highs = recent24.map((b) => b.high);
+          const lows = recent24.map((b) => b.low);
+          const totalVol = recent24.reduce((sum, b) => sum + (b.volume || 0), 0);
+          const firstClose = recent24[0].open || recent24[0].close;
+          const lastClose = recent24[recent24.length - 1].close;
+          const pct = firstClose > 0 ? ((lastClose - firstClose) / firstClose) * 100 : 0;
+
+          setTickerStats({
+            change24h: (pct >= 0 ? '+' : '') + pct.toFixed(2),
+            high24h: Math.round(Math.max(...highs) * 100) / 100,
+            low24h: Math.round(Math.min(...lows) * 100) / 100,
+            volume24h: totalVol > 0 ? `${totalVol.toLocaleString(undefined, { maximumFractionDigits: 1 })} ${activeMarket.name.split('-')[0]}` : `0 ${activeMarket.name.split('-')[0]}`,
+          });
+        }
       }
     });
 
     return () => {
       isMounted = false;
     };
-  }, [activeMarket, chartResolution]);
+  }, [activeMarket, chartResolution, activeProductId]);
 
   // Live Nado Network Candlestick Stream Listener
   useEffect(() => {
@@ -1065,12 +964,6 @@ export default function ProTradePage() {
             </span>
           </div>
           <div className="flex flex-col">
-            <span className="text-xs text-gray-500">Oracle Price (Pyth)</span>
-            <span className="font-bold text-green-400">
-              ${oraclePrice.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
-            </span>
-          </div>
-          <div className="flex flex-col">
             <span className="text-xs text-gray-500">24h Change</span>
             <span className={`font-bold ${parseFloat(tickerStats.change24h) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {parseFloat(tickerStats.change24h) >= 0 ? '+' : ''}{tickerStats.change24h}%
@@ -1419,15 +1312,21 @@ export default function ProTradePage() {
                 <span>Time</span>
               </div>
               <div className="flex-1 overflow-y-auto px-2 pb-2">
-                {recentTrades.map((trade, i) => (
-                  <div key={i} className="flex justify-between py-0.5">
-                    <span className={trade.type === 'buy' ? 'text-green-400' : 'text-red-400'}>
-                      {trade.price.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
-                    </span>
-                    <span className="text-gray-300">{trade.size}</span>
-                    <span className="text-gray-500">{trade.time}</span>
+                {recentTrades.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-xs text-gray-500 italic">
+                    Waiting for Nado trades...
                   </div>
-                ))}
+                ) : (
+                  recentTrades.map((trade, i) => (
+                    <div key={i} className="flex justify-between py-0.5">
+                      <span className={trade.type === 'buy' ? 'text-green-400' : 'text-red-400'}>
+                        {trade.price.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
+                      </span>
+                      <span className="text-gray-300">{trade.size}</span>
+                      <span className="text-gray-500">{trade.time}</span>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
