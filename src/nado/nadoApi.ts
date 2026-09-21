@@ -4,11 +4,20 @@ import { NadoEnv, NadoOrder, PlaceOrderPayload, SubaccountState, SubaccountPosit
 export function getNadoEnv(): NadoEnv {
   if (typeof process !== 'undefined' && process.env) {
     const env = process.env.NEXT_PUBLIC_NADO_ENV;
-    if (env === 'testnet') {
-      return 'testnet';
+    if (env === 'mainnet' || env === 'prod') {
+      return 'mainnet';
     }
   }
-  return 'mainnet';
+  return 'testnet';
+}
+
+/**
+ * Computes canonical sequencer order/cancellation nonce: (recv_time << 20) + random_jitter
+ */
+export function getOrderNonce(recvWindowMs: number = 60000): string {
+  const time = BigInt(Date.now() + recvWindowMs);
+  const randomOffset = BigInt(Math.floor(Math.random() * 1000));
+  return ((time << BigInt(20)) + randomOffset).toString();
 }
 
 // Retrieve dynamic REST & WebSocket URLs based on unified endpoints
@@ -198,56 +207,120 @@ export async function placeOrder(
 }
 
 /**
- * Query historical OHLCV chart bars for visual charts (like Lightweight Charts).
- * @param productId Asset product id (e.g. 4 for ETH-PERP)
+ * Query historical OHLCV chart bars from Nado Archive API.
+ * @param productId Asset product id (e.g. 8 for SOL-PERP, 2 for BTC-PERP, 4 for ETH-PERP)
  * @param resolution Bar resolution ('1m', '5m', '15m', '1h', '1d', etc.)
- * @param from Unix timestamp (seconds)
- * @param to Unix timestamp (seconds)
+ * @param limit Maximum number of bars to fetch (default 100)
  */
 export async function fetchHistoricalOHLCV(
   productId: number,
-  resolution: string,
-  from: number,
-  to: number
+  resolution: string = '1h',
+  limit: number = 100
 ): Promise<OHLCVBar[]> {
   const { archive } = getNadoEndpoints();
-  const url = `${archive}/ohlcv?product_id=${productId}&resolution=${encodeURIComponent(
-    resolution
-  )}&from=${from}&to=${to}`;
 
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
-  });
+  const granularityMap: Record<string, number> = {
+    '1m': 60,
+    '5m': 300,
+    '15m': 900,
+    '1h': 3600,
+    '1H': 3600,
+    '4h': 14400,
+    '4H': 14400,
+    '1d': 86400,
+    '1D': 86400,
+  };
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch historical OHLCV: ${response.status} ${response.statusText}`);
-  }
+  const granularity = granularityMap[resolution] || 3600;
 
-  return response.json();
-}
-
-/**
- * Fetch past fills/executions history for a subaccount.
- */
-export async function fetchPastFills(
-  sender: string,
-  subaccountName: string = 'default'
-): Promise<PastFill[]> {
   try {
-    const { archive } = getNadoEndpoints();
-    const url = `${archive}/fills?sender=${encodeURIComponent(sender)}&subaccount_name=${encodeURIComponent(subaccountName)}`;
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
+    const response = await fetch(archive, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept-Encoding': 'gzip, deflate, br',
+      },
+      body: JSON.stringify({
+        candlesticks: {
+          product_id: productId,
+          granularity,
+          limit,
+        },
+      }),
     });
 
     if (response.ok) {
-      return await response.json();
+      const data = await response.json();
+      if (data.candlesticks && Array.isArray(data.candlesticks)) {
+        return data.candlesticks
+          .map((c: any) => ({
+            time: parseInt(c.timestamp, 10),
+            open: parseFloat(c.open_x18) / 1e18,
+            high: parseFloat(c.high_x18) / 1e18,
+            low: parseFloat(c.low_x18) / 1e18,
+            close: parseFloat(c.close_x18) / 1e18,
+            volume: parseFloat(c.volume) / 1e18,
+          }))
+          .sort((a: OHLCVBar, b: OHLCVBar) => a.time - b.time);
+      }
     }
   } catch (err) {
-    console.warn('[NadoAPI] Failed to fetch past trade fills:', err);
+    console.warn('[NadoAPI] Failed to fetch historical candlesticks from archive:', err);
+  }
+
+  return [];
+}
+
+/**
+ * Fetch past fills/executions history for a subaccount from Nado Archive API.
+ */
+export async function fetchPastFills(
+  sender: string,
+  limit: number = 50
+): Promise<PastFill[]> {
+  try {
+    const { archive } = getNadoEndpoints();
+    const response = await fetch(archive, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept-Encoding': 'gzip, deflate, br',
+      },
+      body: JSON.stringify({
+        matches: {
+          subaccounts: [sender],
+          limit,
+        },
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.matches && Array.isArray(data.matches)) {
+        return data.matches.map((m: any) => {
+          const rawAmount = parseFloat(m.base_filled || '0') / 1e18;
+          const orderPrice = m.order?.priceX18 ? parseFloat(m.order.priceX18) / 1e18 : 0;
+          const calcPrice = m.quote_filled && rawAmount !== 0 ? Math.abs(parseFloat(m.quote_filled) / 1e18 / rawAmount) : 0;
+          const price = orderPrice || calcPrice;
+          const fee = parseFloat(m.fee || '0') / 1e18;
+          const timestamp = m.placed_at || (m.submission_idx ? parseInt(m.submission_idx, 10) : Math.floor(Date.now() / 1000));
+          const productId = m.pre_balance?.base?.perp?.product_id || 0;
+
+          return {
+            productId,
+            orderId: m.digest || `match_${m.submission_idx}`,
+            fillId: m.digest || `fill_${m.submission_idx}`,
+            price,
+            amount: Math.abs(rawAmount),
+            fee,
+            timestamp: typeof timestamp === 'number' ? timestamp : Math.floor(Date.now() / 1000),
+            side: rawAmount >= 0 ? ('buy' as const) : ('sell' as const),
+          };
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[NadoAPI] Failed to fetch past trade fills from archive:', err);
   }
 
   return [];
@@ -334,4 +407,119 @@ export async function fetchNadoSubaccountInfo(subaccountHex: string): Promise<an
   }
   return null;
 }
+
+export interface NadoOpenOrder {
+  productId: number;
+  sender: string;
+  priceX18: string;
+  amount: string;
+  unfilledAmount: string;
+  expiration: string;
+  nonce: string;
+  digest: string;
+  placedAt: number;
+}
+
+/**
+ * Fetch active open limit orders from Nado Gateway query endpoint
+ */
+export async function fetchNadoOpenOrders(
+  sender: string,
+  productId?: number
+): Promise<NadoOpenOrder[]> {
+  const { gateway } = getNadoEndpoints();
+  try {
+    let url = `${gateway}/query?type=subaccount_orders&sender=${encodeURIComponent(sender)}`;
+    if (productId !== undefined) {
+      url += `&product_id=${productId}`;
+    }
+
+    const res = await fetch(url, {
+      headers: { 'Accept-Encoding': 'gzip, deflate, br' },
+      cache: 'no-store',
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      if (json.status === 'success' && json.data && Array.isArray(json.data.orders)) {
+        return json.data.orders.map((o: any) => ({
+          productId: o.product_id,
+          sender: o.sender,
+          priceX18: o.price_x18,
+          amount: o.amount,
+          unfilledAmount: o.unfilled_amount,
+          expiration: o.expiration,
+          nonce: o.nonce,
+          digest: o.digest,
+          placedAt: o.placed_at,
+        }));
+      }
+    }
+  } catch (err) {
+    console.warn('[NadoAPI] Failed to fetch open orders:', err);
+  }
+  return [];
+}
+
+/**
+ * Cancels an open order on Nado off-chain matching engine via EIP-712 Cancellation signature.
+ */
+export async function cancelNadoOrder(
+  productId: number,
+  digest: string,
+  sender: string,
+  signer: any
+): Promise<any> {
+  const nonce = getOrderNonce();
+  const chainId = parseInt(process.env.NEXT_PUBLIC_NADO_CHAIN_ID || '57073', 10);
+  const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT;
+
+  const domain: {
+    name: string;
+    version: string;
+    chainId: number;
+    verifyingContract?: string;
+  } = {
+    name: 'Nado',
+    version: '0.1.0',
+    chainId,
+  };
+
+  if (endpointContract && endpointContract !== '0x0000000000000000000000000000000000000000') {
+    domain.verifyingContract = endpointContract;
+  }
+
+  const types = {
+    Cancellation: [
+      { name: 'sender', type: 'bytes32' },
+      { name: 'productIds', type: 'uint32[]' },
+      { name: 'digests', type: 'bytes32[]' },
+      { name: 'nonce', type: 'uint64' },
+    ],
+  };
+
+  const value = {
+    sender,
+    productIds: [productId],
+    digests: [digest],
+    nonce: BigInt(nonce),
+  };
+
+  const signature = await signer.signTypedData(domain, types, value);
+
+  const payload = {
+    cancel_orders: {
+      tx: {
+        sender,
+        productIds: [productId],
+        digests: [digest],
+        nonce,
+      },
+      signature,
+    },
+  };
+
+  return await executeNadoAction(payload);
+}
+
 

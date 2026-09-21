@@ -1,14 +1,16 @@
 "use client";
 
-import React, { useState } from 'react';
-import { X, ArrowDownRight, ArrowUpRight, ShieldCheck, Loader2, Info } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { X, ArrowDownRight, ArrowUpRight, ShieldCheck, Loader2, Info, AlertTriangle } from 'lucide-react';
 import { useWallet } from './WalletContext';
+import { ethers } from 'ethers';
 
 interface SubaccountModalProps {
   isOpen: boolean;
   onClose: () => void;
   subaccountCollateral?: number;
   freeCollateral?: number;
+  onSuccess?: () => void;
 }
 
 export default function SubaccountModal({
@@ -16,24 +18,44 @@ export default function SubaccountModal({
   onClose,
   subaccountCollateral = 0,
   freeCollateral = 0,
+  onSuccess,
 }: SubaccountModalProps) {
-  const { isConnected, balance, addTransaction } = useWallet();
+  const { isConnected, balance } = useWallet();
   const [mode, setMode] = useState<'deposit' | 'withdraw'>('deposit');
   const [amount, setAmount] = useState<string>('');
   const [subaccountName, setSubaccountName] = useState<string>('default');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const isProcessingRef = useRef(false);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'info'; msg: string } | null>(null);
 
   if (!isOpen) return null;
+
+  const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT;
+  const isContractConfigured =
+    Boolean(endpointContract) &&
+    endpointContract !== '0x0000000000000000000000000000000000000000' &&
+    endpointContract?.startsWith('0x') &&
+    endpointContract?.length === 42;
 
   const numAmount = parseFloat(amount) || 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isProcessingRef.current || isProcessing) return;
+
     if (!isConnected) {
       setFeedback({ type: 'error', msg: 'Please connect your Web3 wallet first.' });
       return;
     }
+
+    if (!isContractConfigured) {
+      setFeedback({
+        type: 'info',
+        msg: 'On-chain testnet collateral contract deployment is pending. Direct on-chain settlement will activate once the endpoint contract is deployed on Ink Testnet.',
+      });
+      return;
+    }
+
     if (numAmount <= 0) {
       setFeedback({ type: 'error', msg: 'Please enter a valid collateral amount.' });
       return;
@@ -49,41 +71,50 @@ export default function SubaccountModal({
       return;
     }
 
+    isProcessingRef.current = true;
     setIsProcessing(true);
     setFeedback(null);
 
     try {
-      // Simulate Nado Endpoint contract deposit Collateral / withdraw Collateral transaction
-      await new Promise((res) => setTimeout(res, 1200));
+      const providerSource = typeof window !== 'undefined' ? (window as any).ethereum : null;
+      if (!providerSource) throw new Error('No Web3 wallet provider available.');
+
+      const provider = new ethers.BrowserProvider(providerSource);
+      const signer = await provider.getSigner();
+
+      const endpointAbi = [
+        'function depositCollateral(bytes32 subaccount, uint32 productId, uint128 amount) external',
+        'function withdrawCollateral(bytes32 subaccount, uint32 productId, uint128 amount) external',
+      ];
+      const contract = new ethers.Contract(endpointContract!, endpointAbi, signer);
+
+      const cleanAddr = (await signer.getAddress()).replace(/^0x/, '').toLowerCase();
+      const nameHex = Buffer.from(subaccountName, 'utf-8').toString('hex').padEnd(24, '0').slice(0, 24);
+      const subaccountBytes32 = '0x' + (cleanAddr + nameHex).slice(0, 64);
+      const amountX18 = ethers.parseUnits(numAmount.toFixed(18), 18);
 
       if (mode === 'deposit') {
-        addTransaction({
-          type: 'Deposit',
-          amount: -numAmount,
-          asset: 'USDC',
-          network: 'Ink',
-        });
+        const tx = await contract.depositCollateral(subaccountBytes32, 0, amountX18);
+        await tx.wait();
         setFeedback({
           type: 'success',
-          msg: `Successfully deposited $${numAmount.toFixed(2)} USDC to subaccount '${subaccountName}'!`,
+          msg: `Deposit of $${numAmount.toFixed(2)} USDC confirmed on Ink!`,
         });
       } else {
-        addTransaction({
-          type: 'Withdraw',
-          amount: numAmount,
-          asset: 'USDC',
-          network: 'Ink',
-        });
+        const tx = await contract.withdrawCollateral(subaccountBytes32, 0, amountX18);
+        await tx.wait();
         setFeedback({
           type: 'success',
-          msg: `Successfully requested withdrawal of $${numAmount.toFixed(2)} USDC from subaccount '${subaccountName}'!`,
+          msg: `Withdrawal of $${numAmount.toFixed(2)} USDC confirmed on Ink!`,
         });
       }
 
       setAmount('');
+      onSuccess?.();
     } catch (err: any) {
       setFeedback({ type: 'error', msg: err.message || 'Collateral transaction failed.' });
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
     }
   };
@@ -99,7 +130,7 @@ export default function SubaccountModal({
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors"
+            className="p-1 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
           >
             <X size={18} />
           </button>
@@ -113,7 +144,7 @@ export default function SubaccountModal({
               setMode('deposit');
               setFeedback(null);
             }}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all ${
+            className={`flex-1 py-2 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
               mode === 'deposit'
                 ? 'bg-green-500 text-background shadow-lg shadow-green-500/20'
                 : 'text-gray-400 hover:text-white'
@@ -127,7 +158,7 @@ export default function SubaccountModal({
               setMode('withdraw');
               setFeedback(null);
             }}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all ${
+            className={`flex-1 py-2 text-xs font-bold rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
               mode === 'withdraw'
                 ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/20'
                 : 'text-gray-400 hover:text-white'
@@ -136,6 +167,17 @@ export default function SubaccountModal({
             <ArrowUpRight size={14} /> Withdraw Collateral
           </button>
         </div>
+
+        {/* On-chain Testnet Status Notice */}
+        {!isContractConfigured && (
+          <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-start gap-2.5">
+            <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-400" />
+            <div>
+              <span className="font-bold block text-amber-200">Testnet Settlement Notice</span>
+              On-chain collateral deposit contracts on Ink Testnet are currently pending official protocol deployment. Direct on-chain deposit and withdrawal will activate once the endpoint smart contract address is configured.
+            </div>
+          </div>
+        )}
 
         {/* Balances Display */}
         <div className="grid grid-cols-2 gap-3 mb-5 text-xs font-mono">
@@ -155,6 +197,8 @@ export default function SubaccountModal({
             className={`p-3 rounded-xl mb-4 text-xs font-semibold border flex items-center gap-2 ${
               feedback.type === 'success'
                 ? 'bg-green-950/80 border-green-500/30 text-green-300'
+                : feedback.type === 'info'
+                ? 'bg-amber-950/80 border-amber-500/30 text-amber-300'
                 : 'bg-red-950/80 border-red-500/30 text-red-300'
             }`}
           >
@@ -182,7 +226,7 @@ export default function SubaccountModal({
               <button
                 type="button"
                 onClick={() => setAmount(mode === 'deposit' ? balance.toString() : freeCollateral.toString())}
-                className="text-primary font-bold hover:underline"
+                className="text-primary font-bold hover:underline cursor-pointer"
               >
                 Max
               </button>
@@ -202,17 +246,21 @@ export default function SubaccountModal({
 
           <button
             type="submit"
-            disabled={isProcessing}
+            disabled={isProcessing || !isContractConfigured}
             className={`w-full py-3 rounded-xl font-bold text-sm shadow-lg flex items-center justify-center gap-2 transition-all ${
-              isProcessing
+              !isContractConfigured
+                ? 'bg-white/10 text-gray-400 cursor-not-allowed border border-white/5'
+                : isProcessing
                 ? 'bg-gray-600 cursor-not-allowed opacity-50'
                 : mode === 'deposit'
-                ? 'bg-green-500 hover:bg-green-400 text-background shadow-green-500/20'
-                : 'bg-purple-500 hover:bg-purple-400 text-white shadow-purple-500/20'
+                ? 'bg-green-500 hover:bg-green-400 text-background shadow-green-500/20 cursor-pointer'
+                : 'bg-purple-500 hover:bg-purple-400 text-white shadow-purple-500/20 cursor-pointer'
             }`}
           >
             {isProcessing && <Loader2 size={16} className="animate-spin" />}
-            {isProcessing
+            {!isContractConfigured
+              ? 'On-Chain Deposits Pending Deployment'
+              : isProcessing
               ? 'Processing Transaction...'
               : mode === 'deposit'
               ? 'Confirm Deposit to Nado'
@@ -223,3 +271,4 @@ export default function SubaccountModal({
     </div>
   );
 }
+

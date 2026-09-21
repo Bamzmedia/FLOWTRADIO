@@ -11,7 +11,7 @@ export async function GET() {
     }
     throw new Error('API not available yet');
   } catch (error) {
-    // Fallback: Return top competitive traders on FLOWTRADIO
+    // Fallback: Return top competitive traders on NEOTRADIO
     const fallbackTraders = [
       {
         rank: 1,

@@ -176,14 +176,25 @@ class NadoWebSocketClient {
   /**
    * WebSocket v2 Cancel Orders with Correlated Response
    */
-  public cancelOrders(productId: number, digests: string[], signature: string, reqId?: number): number {
+  public cancelOrders(
+    sender: string,
+    productId: number,
+    digests: string[],
+    nonce: string,
+    signature: string,
+    reqId?: number
+  ): number {
     const id = reqId ?? this.nextRequestId++;
     const payload = {
       method: 'execute',
       tx: {
         cancel_orders: {
-          product_id: productId,
-          digests,
+          tx: {
+            sender,
+            productIds: [productId],
+            digests,
+            nonce,
+          },
           signature,
           id, // v2 correlated ID field
         },
@@ -473,9 +484,12 @@ export function useNadoWebSocket() {
     return client.current.executeOrderAsync(productId, order, signature);
   }, []);
 
-  const cancelOrders = useCallback((productId: number, digests: string[], signature: string, reqId?: number) => {
-    return client.current.cancelOrders(productId, digests, signature, reqId);
-  }, []);
+  const cancelOrders = useCallback(
+    (sender: string, productId: number, digests: string[], nonce: string, signature: string, reqId?: number) => {
+      return client.current.cancelOrders(sender, productId, digests, nonce, signature, reqId);
+    },
+    []
+  );
 
   const cancelProductOrders = useCallback((productIds: number[], signature: string, reqId?: number) => {
     return client.current.cancelProductOrders(productIds, signature, reqId);

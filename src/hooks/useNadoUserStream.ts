@@ -5,7 +5,7 @@ import { ethers } from 'ethers';
 import { useAppKitAccount, useAppKitProvider } from '@reown/appkit/react';
 import { useNadoWebSocket } from './useNadoWebSocket';
 import { WSOrderUpdate, WSFillUpdate, WSSubaccountInfoUpdate, WSPositionChangeUpdate } from '../types/nado';
-import { fetchNadoSubaccountInfo } from '../nado/nadoApi';
+import { fetchNadoSubaccountInfo, fetchNadoOpenOrders, fetchPastFills } from '../nado/nadoApi';
 
 // Converts a base-18 fixed-point integer string (X18) to a float
 const parseX18 = (val: string | number): number => {
@@ -143,27 +143,32 @@ export function useNadoUserStream() {
             domain.verifyingContract = contractAddress;
           }
 
-          // Fix 2: Render standard 42-char EVM address instead of raw 66-char bytes32 hex
+          // Nado sequencer expects sender as bytes32 subaccount identifier
           const types = {
             StreamAuthentication: [
-              { name: 'sender', type: 'address' },
+              { name: 'sender', type: 'bytes32' },
               { name: 'expiration', type: 'uint64' },
             ],
           };
 
           const value = {
-            sender: ethers.getAddress(address),
-            expiration: expirationMs,
+            sender: senderBytes32,
+            expiration: BigInt(expirationMs),
           };
 
           signature = await signer.signTypedData(domain, types, value);
-        } catch (signErr) {
-          console.warn('[NadoAuth] Wallet signature prompt bypassed/fallback used:', signErr);
-          signature = '0x' + '1b'.repeat(65);
+        } catch (signErr: any) {
+          console.warn('[NadoAuth] Wallet signature rejected or failed:', signErr);
+          setError(signErr.message || 'Signature rejected by wallet.');
+          setIsAuthenticating(false);
+          setIsAuthenticated(false);
+          return;
         }
       } else {
-        // Fallback demo signature
-        signature = '0x' + '1b'.repeat(65);
+        setError('No Web3 wallet provider available for authentication.');
+        setIsAuthenticating(false);
+        setIsAuthenticated(false);
+        return;
       }
 
       // Cache signature in sessionStorage
@@ -179,8 +184,7 @@ export function useNadoUserStream() {
     } catch (err: any) {
       console.error('[NadoAuth] Authentication failed:', err);
       setError(err.message || 'Signature request failed.');
-      // Auto-recover to authenticated state with fallback
-      setIsAuthenticated(true);
+      setIsAuthenticated(false);
     } finally {
       setIsAuthenticating(false);
     }
@@ -205,17 +209,20 @@ export function useNadoUserStream() {
     }
   }, [isConnected, address, ws.isConnected, isAuthenticated, isAuthenticating, authenticateUser]);
 
-  // Fetch initial subaccount snapshot via REST upon wallet connection
-  useEffect(() => {
+  // Sync subaccount state via REST Gateway & Archive queries
+  const refresh = useCallback(async () => {
     if (!isConnected || !address) return;
-    let isMounted = true;
     const senderBytes32 = formatSubaccountSender(address, 'default');
 
-    const syncSubaccount = async () => {
-      try {
-        const data = await fetchNadoSubaccountInfo(senderBytes32);
-        if (!isMounted || !data) return;
+    try {
+      const [subInfo, openOrders, pastFills] = await Promise.allSettled([
+        fetchNadoSubaccountInfo(senderBytes32),
+        fetchNadoOpenOrders(senderBytes32),
+        fetchPastFills(senderBytes32),
+      ]);
 
+      if (subInfo.status === 'fulfilled' && subInfo.value) {
+        const data = subInfo.value;
         let totalCollateral = 0;
         if (data.spot_balances && Array.isArray(data.spot_balances)) {
           // Product 0 is Primary Collateral (USDC)
@@ -250,21 +257,57 @@ export function useNadoUserStream() {
           timestamp: Date.now(),
         }));
 
-        if (Object.keys(newPositions).length > 0) {
-          setPositions(newPositions);
-        }
-      } catch (err) {
-        console.warn('[useNadoUserStream] REST subaccount query failed:', err);
+        setPositions(newPositions);
       }
-    };
 
-    syncSubaccount();
-    const timer = setInterval(syncSubaccount, 15000);
+      // Hydrate open orders from Gateway REST query
+      if (openOrders.status === 'fulfilled' && Array.isArray(openOrders.value)) {
+        const parsedOrders: ParsedUserOrder[] = openOrders.value.map((o) => ({
+          productId: o.productId,
+          orderId: o.digest,
+          price: parseX18(o.priceX18),
+          amount: Math.abs(parseX18(o.amount)),
+          expiration: parseInt(o.expiration, 10),
+          nonce: o.nonce,
+          status: 'open',
+          timestamp: o.placedAt || Math.floor(Date.now() / 1000),
+        }));
+        setOrders(parsedOrders);
+      }
+
+      // Hydrate trade fills from Archive REST query with deduplication
+      if (pastFills.status === 'fulfilled' && Array.isArray(pastFills.value) && pastFills.value.length > 0) {
+        const newFills: ParsedUserFill[] = pastFills.value.map((f) => ({
+          productId: f.productId,
+          orderId: f.orderId,
+          fillId: f.fillId,
+          price: f.price,
+          amount: f.amount,
+          fee: f.fee,
+          side: f.side,
+          timestamp: f.timestamp,
+        }));
+        setFills((prev) => {
+          const map = new Map<string, ParsedUserFill>();
+          prev.forEach((f) => map.set(f.fillId, f));
+          newFills.forEach((f) => map.set(f.fillId, f));
+          return Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp).slice(0, 100);
+        });
+      }
+    } catch (err) {
+      console.warn('[useNadoUserStream] REST sync failed:', err);
+    }
+  }, [isConnected, address]);
+
+  // Fetch initial subaccount snapshot via REST and poll every 15s
+  useEffect(() => {
+    if (!isConnected || !address) return;
+    refresh();
+    const timer = setInterval(refresh, 15000);
     return () => {
-      isMounted = false;
       clearInterval(timer);
     };
-  }, [isConnected, address]);
+  }, [isConnected, address, refresh]);
 
   // Subscribe to private streams upon authentication
   useEffect(() => {
@@ -318,7 +361,11 @@ export function useNadoUserStream() {
           timestamp: fillUpdate.timestamp,
         };
 
-        setFills((prev) => [parsedFill, ...prev].slice(0, 100));
+        setFills((prev) => {
+          const exists = prev.some((f) => f.fillId === parsedFill.fillId || (f.orderId === parsedFill.orderId && f.timestamp === parsedFill.timestamp));
+          if (exists) return prev;
+          return [parsedFill, ...prev].slice(0, 100);
+        });
       }
 
       // 3. Position Change stream
@@ -334,10 +381,17 @@ export function useNadoUserStream() {
           timestamp: posUpdate.timestamp,
         };
 
-        setPositions((prev) => ({
-          ...prev,
-          [posUpdate.product_id]: parsedPos,
-        }));
+        setPositions((prev) => {
+          if (Math.abs(parsedPos.amount) < 1e-6) {
+            const copy = { ...prev };
+            delete copy[posUpdate.product_id];
+            return copy;
+          }
+          return {
+            ...prev,
+            [posUpdate.product_id]: parsedPos,
+          };
+        });
       }
 
       // 4. Subaccount Info stream
@@ -363,6 +417,22 @@ export function useNadoUserStream() {
     };
   }, [isAuthenticated, ws.isConnected, ws.subscribe, ws.unsubscribe, ws.addListener, ws.removeListener]);
 
+  const addOptimisticOrder = useCallback((order: ParsedUserOrder) => {
+    setOrders((prev) => [order, ...prev.filter((o) => o.orderId !== order.orderId)]);
+  }, []);
+
+  const removeOptimisticOrder = useCallback((orderId: string) => {
+    setOrders((prev) => prev.filter((o) => o.orderId !== orderId));
+  }, []);
+
+  const removeOptimisticPosition = useCallback((productId: number) => {
+    setPositions((prev) => {
+      const copy = { ...prev };
+      delete copy[productId];
+      return copy;
+    });
+  }, []);
+
   return {
     isAuthenticated,
     isAuthenticating,
@@ -372,5 +442,9 @@ export function useNadoUserStream() {
     subaccountInfo,
     error,
     authenticate: authenticateUser,
+    refresh,
+    addOptimisticOrder,
+    removeOptimisticOrder,
+    removeOptimisticPosition,
   };
 }

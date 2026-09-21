@@ -47,7 +47,7 @@ export default function ProfilePage() {
         // Parallel fetching
         const [stateRes, fillsRes] = await Promise.allSettled([
           fetchSubaccountState(senderHex, 'default'),
-          fetchPastFills(senderHex, 'default')
+          fetchPastFills(senderHex, 50)
         ]);
         
         if (!isMounted) return;

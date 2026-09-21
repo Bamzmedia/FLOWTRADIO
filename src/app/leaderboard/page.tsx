@@ -45,7 +45,7 @@ export default function LeaderboardPage() {
               <Trophy className="text-yellow-500" size={40} /> Leaderboard
             </h1>
             <p className="text-gray-400 text-lg max-w-2xl">
-              Discover the top performing traders on FLOWTRADIO. Analyze their strategies or copy their trades directly.
+              Discover the top performing traders on NEOTRADIO. Analyze their strategies or copy their trades directly.
             </p>
           </div>
 
@@ -83,7 +83,7 @@ export default function LeaderboardPage() {
             </div>
             <h2 className="text-2xl font-bold mb-2">No Traders Ranked Yet</h2>
             <p className="text-gray-400 text-center max-w-md">
-              The leaderboard is currently empty. Be the first to start trading and claim the #1 spot on FLOWTRADIO!
+              The leaderboard is currently empty. Be the first to start trading and claim the #1 spot on NEOTRADIO!
             </p>
           </div>
         ) : (

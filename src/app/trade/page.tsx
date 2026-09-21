@@ -10,7 +10,7 @@ import { useNadoWebSocket } from '@/hooks/useNadoWebSocket';
 import { useNadoMarketData } from '@/hooks/useNadoMarketData';
 import { ethers } from 'ethers';
 import { useAppKitAccount, useAppKitProvider } from '@reown/appkit/react';
-import { placeOrder, fetchNadoAllProducts } from '@/nado/nadoApi';
+import { placeOrder, fetchNadoAllProducts, getOrderNonce, cancelNadoOrder } from '@/nado/nadoApi';
 import { formatSubaccountSender, useNadoUserStream } from '@/hooks/useNadoUserStream';
 import SubaccountModal from '@/components/SubaccountModal';
 import { NadoOrder } from '@/types/nado';
@@ -38,6 +38,17 @@ interface MarketConfig {
   binanceSymbol: string;
   decimals: number;
   initialPrice: number;
+}
+
+// Converts number or string to exact 1e18 BigInt string, avoiding IEEE 754 precision loss
+function toX18String(val: number | string): string {
+  const num = typeof val === 'string' ? parseFloat(val) : val;
+  if (isNaN(num) || !isFinite(num)) return '0';
+  const isNegative = num < 0;
+  const absNum = Math.abs(num);
+  const fixedStr = absNum.toFixed(18);
+  const big = ethers.parseUnits(fixedStr, 18);
+  return (isNegative ? -big : big).toString();
 }
 
 const MARKETS: MarketConfig[] = [
@@ -72,7 +83,7 @@ const MARKETS: MarketConfig[] = [
 
 export default function ProTradePage() {
   const { t, formatCurrency } = useLocalization();
-  const { isConnected, balance, addTransaction } = useWallet();
+  const { isConnected, balance, addTransaction, address: walletContextAddress } = useWallet();
   const { address: appKitAddress } = useAppKitAccount();
   const { walletProvider } = useAppKitProvider('eip155');
   
@@ -115,11 +126,25 @@ export default function ProTradePage() {
     fills: userFills,
     positions: userPositions,
     subaccountInfo,
+    refresh,
+    addOptimisticOrder,
+    removeOptimisticOrder,
+    removeOptimisticPosition,
   } = useNadoUserStream();
   
+  // Limit Order Price State
+  const [limitPrice, setLimitPrice] = useState<string>('');
+
   // Execution & Feedback State
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
+  const [closingPositionId, setClosingPositionId] = useState<number | null>(null);
   const [toasts, setToasts] = useState<ToastNotice[]>([]);
+
+  // Atomic idempotency guards to prevent duplicate clicks/hotkey triggers
+  const isSubmittingRef = useRef(false);
+  const cancellingOrderRef = useRef<Record<string, boolean>>({});
+  const closingPosRef = useRef<Record<number, boolean>>({});
 
   const wsClient = useNadoWebSocket();
 
@@ -179,10 +204,21 @@ export default function ProTradePage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Derived calculations
+  // Derived calculations with precision & order type awareness
   const numPayAmount = parseFloat(payAmount) || 0;
   const positionSizeUsd = numPayAmount * leverage;
-  const positionSizeAsset = price > 0 ? positionSizeUsd / price : 0;
+  const activeOrderPrice =
+    (orderType === 'limit' || orderType === 'stop') && parseFloat(limitPrice) > 0
+      ? parseFloat(limitPrice)
+      : price;
+  const positionSizeAsset = activeOrderPrice > 0 ? positionSizeUsd / activeOrderPrice : 0;
+  const estimatedFee = positionSizeUsd * 0.0005; // 0.05% standard taker fee
+  const liquidationPrice =
+    price > 0 && leverage > 0
+      ? tradeDirection === 'long'
+        ? Math.max(0, price * (1 - (1 / leverage) * 0.9))
+        : price * (1 + (1 / leverage) * 0.9)
+      : 0;
 
   // Real-time Order Book mapping from live Nado liquidity & WebSocket
   const currentBook = liveOrderBooks[activeProductId];
@@ -545,6 +581,8 @@ export default function ProTradePage() {
   }, [liveCandlesMap, activeProductId]);
 
   const handleExecute = async () => {
+    if (isSubmittingRef.current || isSubmitting) return;
+
     if (!isConnected) {
       const toastId = Date.now().toString();
       setToasts((prev) => [
@@ -561,20 +599,45 @@ export default function ProTradePage() {
       ]);
       return;
     }
-    if (numPayAmount > balance) {
+
+    const effectiveTradingBalance =
+      subaccountInfo && subaccountInfo.freeCollateral > 0
+        ? subaccountInfo.freeCollateral
+        : (isConnected ? balance : 0);
+
+    if (numPayAmount > effectiveTradingBalance) {
       const toastId = Date.now().toString();
       setToasts((prev) => [
         ...prev,
-        { id: toastId, type: 'error', title: 'Insufficient Balance', message: 'Your USDC balance is insufficient for this trade.' },
+        {
+          id: toastId,
+          type: 'error',
+          title: 'Insufficient Balance',
+          message: `Your available trading balance ($${effectiveTradingBalance.toFixed(2)}) is insufficient for this trade ($${numPayAmount.toFixed(2)}).`,
+        },
       ]);
       return;
     }
 
+    if ((orderType === 'limit' || orderType === 'stop') && (!limitPrice || parseFloat(limitPrice) <= 0)) {
+      const toastId = Date.now().toString();
+      setToasts((prev) => [
+        ...prev,
+        {
+          id: toastId,
+          type: 'error',
+          title: 'Invalid Limit Price',
+          message: 'Please enter a valid positive price for your limit order.',
+        },
+      ]);
+      return;
+    }
+
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     const pendingToastId = `pending_${Date.now()}`;
     const assetName = activeMarket.name.split('-')[0];
-    const productIdMap: Record<string, number> = { 'SOL-PERP': 1, 'BTC-PERP': 2, 'ETH-PERP': 4 };
-    const productId = productIdMap[activeMarket.id] || 4;
+    const productId = activeMarket.productId;
 
     // 1. Add Pending Toast Feedback State
     setToasts((prev) => [
@@ -588,26 +651,40 @@ export default function ProTradePage() {
     ]);
 
     try {
+      const activeUserAddress = appKitAddress || walletContextAddress;
+      if (!activeUserAddress || !isConnected) {
+        throw new Error('Please connect your Web3 wallet first.');
+      }
+
       const nowSec = Math.floor(Date.now() / 1000);
       const expiration = (nowSec + 3600).toString(); // 1 hour order expiration
-      const nonce = (Date.now() * 1000000).toString(); // nanosecond nonce
+      const nonce = getOrderNonce(); // Canonical Nado sequencer nonce (recv_time << 20)
       
-      const rawAmount = positionSizeAsset * (tradeDirection === 'long' ? 1 : -1);
-      const amountX18 = BigInt(Math.floor(rawAmount * 1e18)).toString();
-      const priceX18 = BigInt(Math.floor(price * 1e18)).toString();
+      // Order execution price with slippage protection for market orders
+      let orderExecPrice = price;
+      if (orderType === 'limit' || orderType === 'stop') {
+        orderExecPrice = parseFloat(limitPrice) || price;
+      } else {
+        // Apply 1% protective buffer on matching engine to ensure market fills
+        orderExecPrice = tradeDirection === 'long' ? price * 1.01 : price * 0.99;
+      }
 
-      // Retrieve connected wallet address or fallback
-      const activeUserAddress = appKitAddress || '0x0000000000000000000000000000000000000000';
+      // Quantity calculation with exact sign & 1e18 precision
+      const rawAmount = positionSizeAsset * (tradeDirection === 'long' ? 1 : -1);
+      const amountX18 = toX18String(rawAmount);
+      const priceX18 = toX18String(orderExecPrice);
+
       const sender = formatSubaccountSender(activeUserAddress, 'default');
 
-      // Request authentic EIP-712 Order Signature from connected wallet if available
-      let realSignature = '0x' + '1b'.repeat(65);
-      if (walletProvider) {
+      // Request authentic EIP-712 Order Signature from connected wallet
+      let realSignature = '';
+      const providerSource = walletProvider || (typeof window !== 'undefined' ? (window as any).ethereum : null);
+      if (providerSource) {
         try {
-          const provider = new ethers.BrowserProvider(walletProvider as any);
+          const provider = new ethers.BrowserProvider(providerSource as any);
           const signer = await provider.getSigner();
           const activeNetwork = await provider.getNetwork();
-          const chainId = Number(activeNetwork.chainId) || 57073; // Ink Chain Mainnet (57073) or connected Ink network
+          const chainId = Number(activeNetwork.chainId) || 57073;
 
           const domain: {
             name: string;
@@ -615,8 +692,8 @@ export default function ProTradePage() {
             chainId: number;
             verifyingContract?: string;
           } = {
-            name: 'Neotradio',
-            version: '1',
+            name: 'Nado',
+            version: '0.1.0',
             chainId: chainId,
           };
 
@@ -647,8 +724,11 @@ export default function ProTradePage() {
           realSignature = await signer.signTypedData(domain, types, value);
           console.log('[EIP-712] Cryptographic Order Signature created successfully:', realSignature);
         } catch (sigErr: any) {
-          console.warn('[EIP-712] User rejected signature or wallet unavailable, using fallback', sigErr);
+          console.warn('[EIP-712] User rejected signature or wallet error:', sigErr);
+          throw new Error(sigErr.message || 'Order signature rejected by wallet.');
         }
+      } else {
+        throw new Error('No Web3 wallet provider available to sign order.');
       }
 
       const orderPayload: NadoOrder = {
@@ -662,24 +742,35 @@ export default function ProTradePage() {
       let orderIdRes = `ord_${Math.floor(Math.random() * 1000000)}`;
 
       if (execMode === 'REST') {
-        // Dispatch REST POST request to Gateway (/execute) with required headers & real signature
         console.log('[OrderExecution] Submitting REST order execution payload...');
-        const res = await placeOrder(productId, orderPayload, realSignature).catch((err) => {
-          return { order_id: orderIdRes, status: 'success' };
-        });
+        const res = await placeOrder(productId, orderPayload, realSignature);
         if (res && res.order_id) {
           orderIdRes = res.order_id;
         }
       } else {
-        // Submit WebSocket v2 Concurrent Dispatch JSON payload with real signature
         console.log('[OrderExecution] Submitting WebSocket v2 concurrent execute payload...');
-        const wsRes = await wsClient.executeOrderAsync(productId, orderPayload, realSignature).catch((err) => {
-          return { id: orderIdRes, status: 'success' };
-        });
+        const wsRes = await wsClient.executeOrderAsync(productId, orderPayload, realSignature);
         if (wsRes && (wsRes.id || wsRes.data?.digest)) {
           orderIdRes = String(wsRes.id || wsRes.data?.digest);
         }
       }
+
+      // If Limit order, optimistically add to open orders list
+      if (orderType === 'limit') {
+        addOptimisticOrder({
+          productId,
+          orderId: orderIdRes,
+          price: orderExecPrice,
+          amount: positionSizeAsset,
+          expiration: parseInt(expiration, 10),
+          nonce,
+          status: 'open',
+          timestamp: Math.floor(Date.now() / 1000),
+        });
+      }
+
+      // Re-sync subaccount state immediately
+      refresh();
 
       // Dispatch Conditional Orders to Relayer if any
       if (takeProfit || stopLoss || trailingPct) {
@@ -722,10 +813,10 @@ export default function ProTradePage() {
           id: successToastId,
           type: 'success',
           title: 'Order Executed & Filled!',
-          message: `${tradeDirection.toUpperCase()} ${positionSizeAsset.toFixed(4)} ${assetName} @ $${price.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}`,
+          message: `${tradeDirection.toUpperCase()} ${positionSizeAsset.toFixed(4)} ${assetName} @ $${orderExecPrice.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}`,
           receipt: {
             orderId: orderIdRes,
-            price,
+            price: orderExecPrice,
             amount: positionSizeAsset,
             side: tradeDirection === 'long' ? 'buy' : 'sell',
             timestamp: Date.now(),
@@ -754,7 +845,182 @@ export default function ProTradePage() {
         },
       ]);
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
+    }
+  };
+
+  const handleCancelOrder = async (order: { productId: number; orderId: string }) => {
+    if (cancellingOrderRef.current[order.orderId] || cancellingOrderId === order.orderId) return;
+    const activeUserAddress = appKitAddress || walletContextAddress;
+    if (!activeUserAddress) {
+      alert('Please connect your Web3 wallet first.');
+      return;
+    }
+
+    cancellingOrderRef.current[order.orderId] = true;
+    setCancellingOrderId(order.orderId);
+
+    const toastId = `cancel_${Date.now()}`;
+    setToasts((prev) => [
+      ...prev,
+      {
+        id: toastId,
+        type: 'pending',
+        title: 'Cancelling Order...',
+        message: `Submitting cancellation for ${getMarketName(order.productId)}...`,
+      },
+    ]);
+
+    try {
+      const sender = formatSubaccountSender(activeUserAddress, 'default');
+      const providerSource = walletProvider || (typeof window !== 'undefined' ? (window as any).ethereum : null);
+      if (!providerSource) throw new Error('No wallet provider available.');
+
+      const provider = new ethers.BrowserProvider(providerSource as any);
+      const signer = await provider.getSigner();
+
+      await cancelNadoOrder(order.productId, order.orderId, sender, signer);
+
+      removeOptimisticOrder(order.orderId);
+      refresh();
+
+      setToasts((prev) => prev.filter((t) => t.id !== toastId));
+      setToasts((prev) => [
+        ...prev,
+        {
+          id: `cancelled_${Date.now()}`,
+          type: 'success',
+          title: 'Order Cancelled',
+          message: `Order ${order.orderId.slice(0, 10)}... cancellation submitted to sequencer.`,
+        },
+      ]);
+    } catch (err: any) {
+      console.error('[CancelOrder] Error cancelling order:', err);
+      setToasts((prev) => prev.filter((t) => t.id !== toastId));
+      setToasts((prev) => [
+        ...prev,
+        {
+          id: `err_cancel_${Date.now()}`,
+          type: 'error',
+          title: 'Cancellation Failed',
+          message: err.message || 'Sequencer rejected order cancellation.',
+        },
+      ]);
+    } finally {
+      delete cancellingOrderRef.current[order.orderId];
+      setCancellingOrderId(null);
+    }
+  };
+
+  const handleClosePosition = async (pos: { productId: number; amount: number }) => {
+    if (closingPosRef.current[pos.productId] || closingPositionId === pos.productId) return;
+    const activeUserAddress = appKitAddress || walletContextAddress;
+    if (!activeUserAddress) {
+      alert('Please connect your Web3 wallet first.');
+      return;
+    }
+
+    closingPosRef.current[pos.productId] = true;
+    setClosingPositionId(pos.productId);
+
+    const toastId = `close_${Date.now()}`;
+    setToasts((prev) => [
+      ...prev,
+      {
+        id: toastId,
+        type: 'pending',
+        title: 'Closing Position...',
+        message: `Submitting market close order for ${pos.amount > 0 ? 'LONG' : 'SHORT'} position...`,
+      },
+    ]);
+
+    try {
+      const sender = formatSubaccountSender(activeUserAddress, 'default');
+      const providerSource = walletProvider || (typeof window !== 'undefined' ? (window as any).ethereum : null);
+      if (!providerSource) throw new Error('No wallet provider available.');
+
+      const provider = new ethers.BrowserProvider(providerSource as any);
+      const signer = await provider.getSigner();
+      const activeNetwork = await provider.getNetwork();
+      const chainId = Number(activeNetwork.chainId) || 57073;
+
+      const domain: {
+        name: string;
+        version: string;
+        chainId: number;
+        verifyingContract?: string;
+      } = {
+        name: 'Nado',
+        version: '0.1.0',
+        chainId: chainId,
+      };
+
+      const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT;
+      if (endpointContract && endpointContract !== ethers.ZeroAddress && ethers.isAddress(endpointContract)) {
+        domain.verifyingContract = endpointContract;
+      }
+
+      const types = {
+        Order: [
+          { name: 'sender', type: 'bytes32' },
+          { name: 'priceX18', type: 'int128' },
+          { name: 'amount', type: 'int128' },
+          { name: 'expiration', type: 'uint64' },
+          { name: 'nonce', type: 'uint64' },
+        ],
+      };
+
+      // To close a LONG (pos.amount > 0), place a SELL with aggressive slip (e.g. price * 0.95)
+      // To close a SHORT (pos.amount < 0), place a BUY with aggressive slip (e.g. price * 1.05)
+      const closeAmount = -pos.amount;
+      const closePrice = closeAmount > 0 ? price * 1.05 : price * 0.95;
+      const amountX18 = toX18String(closeAmount);
+      const priceX18 = toX18String(closePrice);
+      const expiration = (Math.floor(Date.now() / 1000) + 300).toString();
+      const nonce = getOrderNonce();
+
+      const value = {
+        sender,
+        priceX18: BigInt(priceX18),
+        amount: BigInt(amountX18),
+        expiration: BigInt(expiration),
+        nonce: BigInt(nonce),
+      };
+
+      const signature = await signer.signTypedData(domain, types, value);
+      const orderPayload: NadoOrder = { sender, priceX18, amount: amountX18, expiration, nonce };
+
+      await placeOrder(pos.productId, orderPayload, signature);
+
+      removeOptimisticPosition(pos.productId);
+      refresh();
+
+      setToasts((prev) => prev.filter((t) => t.id !== toastId));
+      setToasts((prev) => [
+        ...prev,
+        {
+          id: `closed_${Date.now()}`,
+          type: 'success',
+          title: 'Position Close Submitted',
+          message: `Closed position on ${getMarketName(pos.productId)}.`,
+        },
+      ]);
+    } catch (err: any) {
+      console.error('[ClosePosition] Error closing position:', err);
+      setToasts((prev) => prev.filter((t) => t.id !== toastId));
+      setToasts((prev) => [
+        ...prev,
+        {
+          id: `err_close_${Date.now()}`,
+          type: 'error',
+          title: 'Close Position Failed',
+          message: err.message || 'Sequencer rejected close order.',
+        },
+      ]);
+    } finally {
+      delete closingPosRef.current[pos.productId];
+      setClosingPositionId(null);
     }
   };
 
@@ -774,6 +1040,7 @@ export default function ProTradePage() {
                 if (selected) {
                   setActiveMarket(selected);
                   setPrice(selected.initialPrice);
+                  setLimitPrice(selected.initialPrice.toString());
                 }
               }}
               className="bg-transparent font-bold text-lg outline-none border-b border-dashed border-primary/50 cursor-pointer text-white pr-2 hover:border-primary transition-all"
@@ -784,9 +1051,9 @@ export default function ProTradePage() {
             </select>
             <span className="text-primary bg-primary/10 px-2 py-0.5 rounded text-xs font-bold">100x</span>
             <div className="flex items-center gap-1.5 ml-1">
-              <span className={`w-2 h-2 rounded-full ${wsClient.isConnected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
-              <span className="text-[11px] font-mono text-gray-400 hidden sm:inline">
-                {wsClient.isConnected ? 'Nado Live' : 'Connecting...'}
+              <span className={`w-2 h-2 rounded-full ${wsClient.isConnected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500 animate-ping'}`} />
+              <span className={`text-[11px] font-mono hidden sm:inline ${wsClient.isConnected ? 'text-green-400' : 'text-yellow-400'}`}>
+                {wsClient.isConnected ? 'Nado Live Stream' : 'Connecting / REST Fallback'}
               </span>
             </div>
           </div>
@@ -927,7 +1194,7 @@ export default function ProTradePage() {
               <div className="flex-1 overflow-y-auto p-3 text-xs font-mono">
                 {activeTab === 'positions' && (
                   <div>
-                    {Object.keys(userPositions).length === 0 ? (
+                    {Object.entries(userPositions).filter(([_, pos]) => Math.abs(pos.amount) > 1e-6).length === 0 ? (
                       <div className="text-center py-6 text-gray-500 font-sans">No active perpetual positions</div>
                     ) : (
                       <table className="w-full text-left">
@@ -943,7 +1210,9 @@ export default function ProTradePage() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5">
-                          {Object.entries(userPositions).map(([pId, pos]) => (
+                          {Object.entries(userPositions)
+                            .filter(([_, pos]) => Math.abs(pos.amount) > 1e-6)
+                            .map(([pId, pos]) => (
                             <tr key={pId} className="hover:bg-white/5">
                               <td className="py-2 font-bold text-white font-sans">
                                 {getMarketName(pos.productId)}
@@ -960,7 +1229,14 @@ export default function ProTradePage() {
                               </td>
                               <td className="py-2 text-yellow-400 font-bold">${pos.marginUsage.toFixed(2)}</td>
                               <td className="py-2 text-right">
-                                <button className="px-2 py-0.5 bg-red-500/20 text-red-400 border border-red-500/30 rounded hover:bg-red-500 hover:text-white transition-all font-sans font-bold">
+                                <button
+                                  disabled={closingPositionId === pos.productId}
+                                  onClick={() => handleClosePosition(pos)}
+                                  className={`px-2 py-0.5 bg-red-500/20 text-red-400 border border-red-500/30 rounded hover:bg-red-500 hover:text-white transition-all font-sans font-bold flex items-center gap-1 ${
+                                    closingPositionId === pos.productId ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                                  }`}
+                                >
+                                  {closingPositionId === pos.productId && <Loader2 size={10} className="animate-spin" />}
                                   Close
                                 </button>
                               </td>
@@ -999,7 +1275,14 @@ export default function ProTradePage() {
                               <td className="py-2 text-gray-300">{order.amount.toFixed(4)}</td>
                               <td className="py-2 text-yellow-400 uppercase text-[10px] font-bold">{order.status}</td>
                               <td className="py-2 text-right">
-                                <button className="px-2 py-0.5 bg-gray-500/20 text-gray-300 border border-white/10 rounded hover:bg-white/10 transition-all font-sans">
+                                <button
+                                  disabled={cancellingOrderId === order.orderId}
+                                  onClick={() => handleCancelOrder(order)}
+                                  className={`px-2 py-0.5 bg-gray-500/20 text-gray-300 border border-white/10 rounded hover:bg-white/10 transition-all font-sans flex items-center gap-1 hover:text-red-400 ${
+                                    cancellingOrderId === order.orderId ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                                  }`}
+                                >
+                                  {cancellingOrderId === order.orderId && <Loader2 size={10} className="animate-spin" />}
                                   Cancel
                                 </button>
                               </td>
@@ -1210,9 +1493,16 @@ export default function ProTradePage() {
               {/* Limit/Stop Price Inputs */}
               {(orderType === 'limit' || orderType === 'stop') && (
                 <div className="bg-black/40 border border-white/5 rounded-xl p-3 flex justify-between items-center focus-within:border-primary/50 transition-colors">
-                  <span className="text-gray-400 text-sm font-medium">Price</span>
+                  <span className="text-gray-400 text-sm font-medium">Limit Price</span>
                   <div className="flex items-center gap-2">
-                    <input type="text" placeholder={price.toString()} className="bg-transparent text-right font-bold outline-none w-24" />
+                    <input 
+                      type="number"
+                      step="any"
+                      placeholder={price.toString()}
+                      value={limitPrice}
+                      onChange={(e) => setLimitPrice(e.target.value)}
+                      className="bg-transparent text-right font-bold outline-none w-28 text-white" 
+                    />
                     <span className="text-gray-500 text-sm">USD</span>
                   </div>
                 </div>
@@ -1259,15 +1549,34 @@ export default function ProTradePage() {
                 </div>
               </div>
 
-              {/* Position Size Calculator Display */}
-              <div className="bg-primary/5 border border-primary/10 rounded-lg p-2 flex justify-between items-center text-sm">
-                <span className="text-gray-400">Position Size</span>
-                <div className="text-right">
-                  <div className="font-bold text-white">
+              {/* Position Size & Detailed Order Calculations Breakdown */}
+              <div className="bg-primary/5 border border-primary/10 rounded-xl p-3 space-y-2 text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400">Position Size</span>
+                  <div className="font-bold text-white text-right">
                     {positionSizeAsset.toFixed(activeMarket.decimals === 1 ? 2 : 4)} {activeMarket.name.split('-')[0]}
                   </div>
-                  <div className="text-gray-500 text-xs">≈ {formatCurrency(positionSizeUsd)}</div>
                 </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400">Notional Total</span>
+                  <span className="font-bold text-white">{formatCurrency(positionSizeUsd)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400">Required Margin</span>
+                  <span className="font-bold text-white">{formatCurrency(numPayAmount)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400">Est. Taker Fee (0.05%)</span>
+                  <span className="text-gray-300">{formatCurrency(estimatedFee)}</span>
+                </div>
+                {liquidationPrice > 0 && numPayAmount > 0 && (
+                  <div className="flex justify-between items-center pt-1.5 border-t border-white/5">
+                    <span className="text-gray-400">Est. Liq. Price</span>
+                    <span className="font-bold text-amber-400">
+                      ${liquidationPrice.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Advanced Settings Toggle */}
@@ -1405,6 +1714,7 @@ export default function ProTradePage() {
         onClose={() => setShowSubaccountModal(false)}
         subaccountCollateral={subaccountInfo?.collateral || 0}
         freeCollateral={subaccountInfo?.freeCollateral || 0}
+        onSuccess={refresh}
       />
     </div>
   );

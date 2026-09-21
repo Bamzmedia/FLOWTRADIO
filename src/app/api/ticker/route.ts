@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getNadoEndpoints } from '@/nado/nadoApi';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,7 +24,11 @@ export async function GET(request: Request) {
       'ETHUSDT': 4, 'ETH-PERP': 4, 'ETH': 4,
     };
     const pId = productMap[symbol] || 8;
-    const nadoRes = await fetch(`https://gateway.test.nado.xyz/v1/query?type=market_price&product_id=${pId}`, { cache: 'no-store' });
+    const { gateway } = getNadoEndpoints();
+    const nadoRes = await fetch(`${gateway}/query?type=market_price&product_id=${pId}`, {
+      headers: { 'Accept-Encoding': 'gzip, deflate, br' },
+      cache: 'no-store',
+    });
     if (nadoRes.ok) {
       const nData = await nadoRes.json();
       if (nData.status === 'success' && nData.data) {
