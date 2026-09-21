@@ -29,14 +29,6 @@ const INITIAL_MARKETS: Market[] = [
   { id: 'doge', symbol: 'DOGE', name: 'Dogecoin', price: 0.14, change24h: -8.5, volume24h: 85000000, fundingRate: -0.02, oi: 18000000 },
 ];
 
-const COINGECKO_MAP: Record<string, string> = {
-  'bitcoin': 'btc',
-  'ethereum': 'eth',
-  'solana': 'sol',
-  'avalanche-2': 'avax',
-  'chainlink': 'link',
-  'arbitrum': 'arb',
-};
 
 export default function MarketsPage() {
   const { t } = useLocalization();
@@ -74,57 +66,23 @@ export default function MarketsPage() {
     });
   }, [liveTrades]);
 
-  // Fetch prices from Binance REST API with CoinGecko fallback
+  // Fetch prices from our internal Nado API wrapper
   const fetchPrices = async () => {
     setIsRefreshing(true);
-
     try {
-      const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "LINKUSDT", "ARBUSDT"];
-      const bRes = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`);
-      if (bRes.ok) {
-        const bData = await bRes.json();
-        setMarketsData(prev => prev.map(m => {
-          const ticker = bData.find((t: any) => t.symbol === `${m.symbol}USDT`);
-          if (ticker) {
-            return {
-              ...m,
-              price: parseFloat(ticker.lastPrice),
-              change24h: parseFloat(ticker.priceChangePercent),
-              volume24h: parseFloat(ticker.quoteVolume),
-            };
-          }
-          return m;
-        }));
-        setIsCachedData(false);
+      const res = await fetch('/api/markets');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.data && Array.isArray(json.data)) {
+          setMarketsData(json.data);
+          setIsCachedData(!!json.isFallback);
+        }
       } else {
-        throw new Error(`Binance status ${bRes.status}`);
+        throw new Error(`API status ${res.status}`);
       }
     } catch (err) {
-      console.warn("Binance fetch failed. Attempting CoinGecko fallback...", err);
-      try {
-        const cgUrl = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,avalanche-2,chainlink,arbitrum&vs_currencies=usd&include_24hr_vol=true&include_24hr_change=true';
-        const res = await fetch(cgUrl);
-        if (res.ok) {
-          const data = await res.json();
-          setMarketsData(prev => prev.map(m => {
-            const cgKey = Object.keys(COINGECKO_MAP).find(k => COINGECKO_MAP[k] === m.id);
-            if (cgKey && data[cgKey]) {
-              const coin = data[cgKey];
-              return {
-                ...m,
-                price: coin.usd || m.price,
-                change24h: coin.usd_24h_change !== undefined ? parseFloat(coin.usd_24h_change.toFixed(2)) : m.change24h,
-                volume24h: coin.usd_24h_vol || m.volume24h,
-              };
-            }
-            return m;
-          }));
-          setIsCachedData(false);
-        }
-      } catch (cgErr) {
-        console.error("All live price sources failed. Using cached fallback data.", cgErr);
-        setIsCachedData(true);
-      }
+      console.warn("API fetch failed. Using cached fallback data.", err);
+      setIsCachedData(true);
     }
 
     setLastUpdatedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
@@ -359,7 +317,7 @@ export default function MarketsPage() {
                       </td>
 
                       <td className="py-4 px-4 text-right">
-                        <Link href="/trade">
+                        <Link href={`/trade?market=${market.symbol}-PERP`}>
                           <button className="glass-panel bg-white/5 hover:bg-primary hover:text-background text-primary px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1 ml-auto">
                             Trade <ArrowRight size={12} />
                           </button>

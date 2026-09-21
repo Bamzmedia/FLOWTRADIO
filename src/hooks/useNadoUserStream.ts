@@ -224,12 +224,23 @@ export function useNadoUserStream() {
       if (subInfo.status === 'fulfilled' && subInfo.value) {
         const data = subInfo.value;
         let totalCollateral = 0;
+        let freeCollateral = 0;
+        let marginUsage = 0;
+
         if (data.spot_balances && Array.isArray(data.spot_balances)) {
           // Product 0 is Primary Collateral (USDC)
           const usdcBalance = data.spot_balances.find((b: any) => b.product_id === 0);
           if (usdcBalance && usdcBalance.balance?.amount) {
             totalCollateral = parseX18(usdcBalance.balance.amount);
           }
+        }
+
+        if (data.healths && Array.isArray(data.healths) && data.healths.length > 0) {
+          const initialHealth = parseX18(data.healths[0].health);
+          freeCollateral = initialHealth > 0 ? initialHealth : 0;
+          marginUsage = parseX18(data.healths[0].liabilities);
+        } else {
+          freeCollateral = totalCollateral;
         }
 
         const newPositions: Record<number, ParsedSubaccountPosition> = {};
@@ -250,12 +261,12 @@ export function useNadoUserStream() {
           });
         }
 
-        setSubaccountInfo((prev) => ({
+        setSubaccountInfo({
           collateral: totalCollateral,
-          freeCollateral: totalCollateral,
-          marginUsage: prev?.marginUsage || 0,
+          freeCollateral: freeCollateral,
+          marginUsage: marginUsage,
           timestamp: Date.now(),
-        }));
+        });
 
         setPositions(newPositions);
       }
@@ -269,7 +280,7 @@ export function useNadoUserStream() {
           amount: Math.abs(parseX18(o.amount)),
           expiration: parseInt(o.expiration, 10),
           nonce: o.nonce,
-          status: 'open',
+          status: o.status || 'open',
           timestamp: o.placedAt || Math.floor(Date.now() / 1000),
         }));
         setOrders(parsedOrders);

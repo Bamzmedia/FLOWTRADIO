@@ -252,7 +252,7 @@ export async function fetchHistoricalOHLCV(
     if (response.ok) {
       const data = await response.json();
       if (data.candlesticks && Array.isArray(data.candlesticks)) {
-        return data.candlesticks
+        const sorted = data.candlesticks
           .map((c: any) => ({
             time: parseInt(c.timestamp, 10),
             open: parseFloat(c.open_x18) / 1e18,
@@ -262,6 +262,17 @@ export async function fetchHistoricalOHLCV(
             volume: parseFloat(c.volume) / 1e18,
           }))
           .sort((a: OHLCVBar, b: OHLCVBar) => a.time - b.time);
+
+        // Deduplicate strictly by time for chart library stability
+        const uniqueBars: OHLCVBar[] = [];
+        const seenTimes = new Set<number>();
+        for (const bar of sorted) {
+          if (!seenTimes.has(bar.time) && bar.close > 0) {
+            seenTimes.add(bar.time);
+            uniqueBars.push(bar);
+          }
+        }
+        return uniqueBars;
       }
     }
   } catch (err) {
@@ -358,17 +369,21 @@ export async function fetchNadoMarketTrades(
     if (response.ok) {
       const data = await response.json();
       const txTimestampMap: Record<string, number> = {};
+      const txProductMap: Record<string, number> = {};
       if (Array.isArray(data.txs)) {
         data.txs.forEach((tx: any) => {
           if (tx.submission_idx && tx.timestamp) {
             txTimestampMap[tx.submission_idx] = parseInt(tx.timestamp, 10);
+          }
+          if (tx.submission_idx && tx.tx?.match_orders?.product_id) {
+            txProductMap[tx.submission_idx] = tx.tx.match_orders.product_id;
           }
         });
       }
 
       if (Array.isArray(data.matches)) {
         return data.matches
-          .filter((m: any) => m.is_taker)
+          .filter((m: any) => m.is_taker && (!txProductMap[m.submission_idx] || txProductMap[m.submission_idx] === productId))
           .map((m: any) => {
             const rawBase = Math.abs(parseFloat(m.base_filled || '0') / 1e18);
             const rawQuote = Math.abs(parseFloat(m.quote_filled || '0') / 1e18);
@@ -484,6 +499,7 @@ export interface NadoOpenOrder {
   expiration: string;
   nonce: string;
   digest: string;
+  status?: 'open' | 'filled' | 'cancelled' | 'rejected';
   placedAt: number;
 }
 
@@ -495,11 +511,16 @@ export async function fetchNadoOpenOrders(
   productId?: number
 ): Promise<NadoOpenOrder[]> {
   const { gateway } = getNadoEndpoints();
+  
+  if (productId === undefined) {
+    // If no product specified, query the active markets manually since the endpoint requires it
+    const activeProducts = [8, 2, 4];
+    const results = await Promise.all(activeProducts.map(pid => fetchNadoOpenOrders(sender, pid)));
+    return results.flat();
+  }
+
   try {
-    let url = `${gateway}/query?type=subaccount_orders&sender=${encodeURIComponent(sender)}`;
-    if (productId !== undefined) {
-      url += `&product_id=${productId}`;
-    }
+    const url = `${gateway}/query?type=subaccount_orders&sender=${encodeURIComponent(sender)}&product_id=${productId}`;
 
     const res = await fetch(url, {
       headers: { 'Accept-Encoding': 'gzip, deflate, br' },
@@ -518,12 +539,13 @@ export async function fetchNadoOpenOrders(
           expiration: o.expiration,
           nonce: o.nonce,
           digest: o.digest,
+          status: o.status,
           placedAt: o.placed_at,
         }));
       }
     }
   } catch (err) {
-    console.warn('[NadoAPI] Failed to fetch open orders:', err);
+    console.warn(`[NadoAPI] Failed to fetch open orders for product ${productId}:`, err);
   }
   return [];
 }

@@ -37,12 +37,16 @@ function mergeLevels(
 ): [number, number][] {
   if (!updates || updates.length === 0) return existing;
   const levelMap = new Map<number, number>();
-  existing.forEach(([p, s]) => levelMap.set(p, s));
+  existing.forEach(([p, s]) => {
+    const key = Math.round(p * 10000) / 10000;
+    levelMap.set(key, s);
+  });
   updates.forEach(([p, s]) => {
+    const key = Math.round(p * 10000) / 10000;
     if (s <= 0) {
-      levelMap.delete(p);
+      levelMap.delete(key);
     } else {
-      levelMap.set(p, s);
+      levelMap.set(key, s);
     }
   });
   const res: [number, number][] = Array.from(levelMap.entries());
@@ -59,6 +63,7 @@ export function useNadoMarketData(productIds: number[], candlestickGranularity: 
   const [orderBooks, setOrderBooks] = useState<Record<number, OrderBookState>>({});
   const [trades, setTrades] = useState<Record<number, ParsedMarketTrade[]>>({});
   const [candlesticks, setCandlesticks] = useState<Record<number, OHLCVBar[]>>({});
+  const [livePrices, setLivePrices] = useState<Record<number, number>>({});
 
   const orderBooksRef = useRef<Record<number, OrderBookState>>({});
   orderBooksRef.current = orderBooks;
@@ -96,6 +101,11 @@ export function useNadoMarketData(productIds: number[], candlestickGranularity: 
               timestamp: Date.now(),
             },
           }));
+
+          if (parsedBids.length > 0 && parsedAsks.length > 0) {
+            const mid = Math.round(((parsedBids[0][0] + parsedAsks[0][0]) / 2) * 100) / 100;
+            setLivePrices((prev) => ({ ...prev, [productId]: mid }));
+          }
         }
 
         // Hydrate genuine past trades from Nado Archive API
@@ -104,6 +114,9 @@ export function useNadoMarketData(productIds: number[], candlestickGranularity: 
             ...prev,
             [productId]: realTrades.value,
           }));
+          if (realTrades.value[0]?.price > 0) {
+            setLivePrices((prev) => ({ ...prev, [productId]: realTrades.value[0].price }));
+          }
         }
 
         // Hydrate genuine candlesticks from Nado Archive API
@@ -160,12 +173,22 @@ export function useNadoMarketData(productIds: number[], candlestickGranularity: 
               ? mergeLevels(current.asks, rawAsks, false)
               : current.asks;
 
+            const bestBid = updatedBids[0]?.[0] || 0;
+            const bestAsk = updatedAsks[0]?.[0] || 0;
+            if (bestBid > 0 && bestAsk > 0) {
+              const mid = Math.round(((bestBid + bestAsk) / 2) * 100) / 100;
+              setLivePrices((lp) => ({ ...lp, [productId]: mid }));
+            }
+
+            const rawTs = (bookUpdate as any).max_timestamp || bookUpdate.timestamp;
+            const timestamp = rawTs ? (Number(rawTs) > 1e12 ? Math.floor(Number(rawTs) / 1e6) : Number(rawTs)) : Date.now();
+
             return {
               ...prev,
               [productId]: {
                 bids: updatedBids,
                 asks: updatedAsks,
-                timestamp: bookUpdate.timestamp ? Number(bookUpdate.timestamp) : Date.now(),
+                timestamp,
               },
             };
           });
@@ -179,13 +202,18 @@ export function useNadoMarketData(productIds: number[], candlestickGranularity: 
 
         if (productIds.includes(productId)) {
           const rawAmount = parseX18(tradeUpdate.amount);
+          const tradePrice = parseX18(tradeUpdate.price);
           const newTrade: ParsedMarketTrade = {
-            price: parseX18(tradeUpdate.price),
+            price: tradePrice,
             amount: Math.abs(rawAmount),
             side: rawAmount >= 0 ? 'buy' : 'sell',
             timestamp: tradeUpdate.timestamp ? Number(tradeUpdate.timestamp) : Date.now(),
             tradeId: tradeUpdate.trade_id || `tr_${Date.now()}`,
           };
+
+          if (tradePrice > 0) {
+            setLivePrices((lp) => ({ ...lp, [productId]: tradePrice }));
+          }
 
           setTrades((prev) => {
             const list = prev[productId] || [];
@@ -254,6 +282,7 @@ export function useNadoMarketData(productIds: number[], candlestickGranularity: 
     orderBooks,
     trades,
     candlesticks,
+    livePrices,
     isLoading: isConnected && Object.keys(orderBooks).length === 0,
   };
 }

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { fetchNadoAllProducts } from '@/nado/nadoApi';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,29 +15,28 @@ const CANONICAL_MARKETS = [
 
 export async function GET() {
   try {
-    const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "LINKUSDT", "ARBUSDT", "DOGEUSDT"];
-    const response = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`, {
-      next: { revalidate: 10 } // Cache REST request for 10 seconds to avoid HTTP 429
-    });
-    
-    if (response.ok) {
-      const data = await response.json();
+    const productsData = await fetchNadoAllProducts();
+    if (productsData && productsData.perp_products) {
+      const productMap: Record<number, string> = {
+        2: 'btc',
+        4: 'eth',
+        8: 'sol',
+      };
       
-      const marketMap = new Map();
-      data.forEach((item: any) => {
-        marketMap.set(item.symbol, item);
+      const priceMap = new Map<string, number>();
+      productsData.perp_products.forEach((p: any) => {
+        const id = productMap[p.product_id];
+        if (id) {
+          priceMap.set(id, parseFloat(p.oracle_price_x18) / 1e18);
+        }
       });
       
       const updatedMarkets = CANONICAL_MARKETS.map(market => {
-        const binanceSymbol = `${market.symbol}USDT`;
-        const ticker = marketMap.get(binanceSymbol);
-        
-        if (ticker) {
+        const price = priceMap.get(market.id);
+        if (price !== undefined) {
           return {
             ...market,
-            price: parseFloat(ticker.lastPrice),
-            change24h: parseFloat(ticker.priceChangePercent),
-            volume24h: parseFloat(ticker.quoteVolume),
+            price: price,
           };
         }
         return market;
@@ -48,9 +48,9 @@ export async function GET() {
       });
     }
     
-    throw new Error('Binance API not reachable');
+    throw new Error('Nado API not reachable');
   } catch (error) {
-    console.log("Failed to fetch live markets from Binance, falling back to cached market data:", error);
+    console.log("Failed to fetch live markets from Nado, falling back to cached market data:", error);
     return NextResponse.json({
       data: CANONICAL_MARKETS,
       timestamp: new Date().toISOString(),

@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { useLocalization } from '@/components/LocalizationContext';
 import { useWallet } from '@/components/WalletContext';
@@ -35,7 +36,6 @@ interface MarketConfig {
   name: string;
   productId: number;
   pythId: string;
-  binanceSymbol: string;
   decimals: number;
   initialPrice: number;
 }
@@ -57,31 +57,28 @@ const MARKETS: MarketConfig[] = [
     name: 'SOL-PERP',
     productId: 8,
     pythId: '0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d',
-    binanceSymbol: 'SOLUSDT',
     decimals: 2,
-    initialPrice: 118.70,
+    initialPrice: 119.10,
   },
   {
     id: 'BTC-PERP',
     name: 'BTC-PERP',
     productId: 2,
     pythId: '0xe62df6c8b4a85f16b255383b75c465b5c0fd4e434e173beedce772c14309fb16',
-    binanceSymbol: 'BTCUSDT',
     decimals: 1,
-    initialPrice: 77350.0,
+    initialPrice: 86400.0,
   },
   {
     id: 'ETH-PERP',
     name: 'ETH-PERP',
     productId: 4,
     pythId: '0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0aec',
-    binanceSymbol: 'ETHUSDT',
     decimals: 2,
-    initialPrice: 2535.0,
+    initialPrice: 2775.0,
   }
 ];
 
-export default function ProTradePage() {
+function TradeContent() {
   const { t, formatCurrency } = useLocalization();
   const { isConnected, balance, addTransaction, address: walletContextAddress, connect } = useWallet();
   const { address: appKitAddress } = useAppKitAccount();
@@ -101,6 +98,19 @@ export default function ProTradePage() {
     low24h: 0,
     volume24h: '0',
   });
+
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const marketParam = searchParams.get('market');
+    if (marketParam) {
+      const clean = marketParam.toUpperCase();
+      const match = MARKETS.find(m => m.id === clean || m.name === clean || m.id.replace('-PERP', '') === clean.replace('-PERP', ''));
+      if (match) {
+        setActiveMarket(match);
+        setPrice(match.initialPrice);
+      }
+    }
+  }, [searchParams]);
 
   // Trading Widget State
   const [tradeDirection, setTradeDirection] = useState<'long' | 'short'>('long');
@@ -163,7 +173,12 @@ export default function ProTradePage() {
   const currentGranularity = granularityMap[chartResolution] || 3600;
 
   // Live Market Data stream via Nado WebSocket
-  const { orderBooks: liveOrderBooks, trades: liveTradesMap, candlesticks: liveCandlesMap } = useNadoMarketData(
+  const {
+    orderBooks: liveOrderBooks,
+    trades: liveTradesMap,
+    candlesticks: liveCandlesMap,
+    livePrices,
+  } = useNadoMarketData(
     [activeProductId],
     currentGranularity
   );
@@ -277,47 +292,64 @@ export default function ProTradePage() {
 
   const currentCandleRef = useRef<{ time: number; open: number; high: number; low: number; close: number } | null>(null);
 
-  // Live Multi-Source Price Sync & Micro-Tick Real-Time Stream
+  // Update active candle on chart whenever a genuine price update occurs
+  const applyPriceUpdate = useCallback((newPrice: number) => {
+    if (newPrice <= 0) return;
+    setPrice(newPrice);
+
+    if (seriesRef.current && currentCandleRef.current) {
+      const step =
+        chartResolution === '1m'
+          ? 60
+          : chartResolution === '5m'
+          ? 300
+          : chartResolution === '15m'
+          ? 900
+          : chartResolution === '1H'
+          ? 3600
+          : chartResolution === '4H'
+          ? 14400
+          : 86400;
+      const nowSec = Math.floor(Date.now() / 1000);
+      const currentSlot = Math.floor(nowSec / step) * step;
+
+      if (currentSlot > currentCandleRef.current.time) {
+        const newBar = {
+          time: currentSlot as any,
+          open: newPrice,
+          high: newPrice,
+          low: newPrice,
+          close: newPrice,
+        };
+        currentCandleRef.current = newBar;
+        try {
+          seriesRef.current.update(newBar);
+        } catch {}
+      } else if (currentSlot === currentCandleRef.current.time) {
+        const c = { ...currentCandleRef.current };
+        c.high = Math.max(c.high, newPrice);
+        c.low = Math.min(c.low, newPrice);
+        c.close = newPrice;
+        currentCandleRef.current = c;
+        try {
+          seriesRef.current.update(c);
+        } catch {}
+      }
+    }
+  }, [chartResolution]);
+
+  // Synchronize live prices streamed via Nado WebSocket
+  useEffect(() => {
+    const livePrice = livePrices[activeProductId];
+    if (livePrice && livePrice > 0) {
+      applyPriceUpdate(livePrice);
+    }
+  }, [livePrices, activeProductId, applyPriceUpdate]);
+
+  // Sync 24h stats and live ticker directly from Nado Gateway & Archive
   useEffect(() => {
     let isMounted = true;
-    let lastRealTick = Date.now();
 
-    // 1. Update active candle on chart whenever price updates
-    const applyPriceUpdate = (newPrice: number) => {
-      if (!isMounted || newPrice <= 0) return;
-      setPrice(newPrice);
-      lastRealTick = Date.now();
-
-      if (seriesRef.current && currentCandleRef.current) {
-        const step = chartResolution === '1m' ? 60 : chartResolution === '5m' ? 300 : chartResolution === '15m' ? 900 : chartResolution === '1H' ? 3600 : chartResolution === '4H' ? 14400 : 86400;
-        const nowSec = Math.floor(Date.now() / 1000);
-        const currentSlot = Math.floor(nowSec / step) * step;
-
-        if (currentSlot > currentCandleRef.current.time) {
-          const newBar = {
-            time: currentSlot as any,
-            open: newPrice,
-            high: newPrice,
-            low: newPrice,
-            close: newPrice,
-          };
-          currentCandleRef.current = newBar;
-          try {
-            seriesRef.current.update(newBar);
-          } catch {}
-        } else {
-          const c = currentCandleRef.current;
-          c.high = Math.max(c.high, newPrice);
-          c.low = Math.min(c.low, newPrice);
-          c.close = newPrice;
-          try {
-            seriesRef.current.update(c);
-          } catch {}
-        }
-      }
-    };
-
-    // 1. Sync live price & stats directly from Nado Gateway & Archive
     const syncLivePriceAndStats = async () => {
       try {
         const res = await fetch(`/api/ticker?symbol=${activeMarket.id}&product_id=${activeProductId}`);
@@ -339,27 +371,13 @@ export default function ProTradePage() {
     };
 
     syncLivePriceAndStats();
-    const pollInterval = setInterval(syncLivePriceAndStats, 4000);
-
-    // 4. Continuous High-Frequency Micro-Tick Streamer (every 600ms)
-    const tickInterval = setInterval(() => {
-      if (!isMounted) return;
-      if (Date.now() - lastRealTick > 1200) {
-        setPrice((prev) => {
-          const delta = (Math.random() - 0.48) * (prev * 0.0003);
-          const next = Math.round((prev + delta) * 100) / 100;
-          applyPriceUpdate(next);
-          return next;
-        });
-      }
-    }, 600);
+    const pollInterval = setInterval(syncLivePriceAndStats, 3000);
 
     return () => {
       isMounted = false;
       clearInterval(pollInterval);
-      clearInterval(tickInterval);
     };
-  }, [activeMarket]);
+  }, [activeMarket, activeProductId, applyPriceUpdate]);
 
   // Initialize Lightweight Chart Container
   useEffect(() => {
@@ -564,8 +582,14 @@ export default function ProTradePage() {
       if (orderType === 'limit' || orderType === 'stop') {
         orderExecPrice = parseFloat(limitPrice) || price;
       } else {
-        // Apply 1% protective buffer on matching engine to ensure market fills
-        orderExecPrice = tradeDirection === 'long' ? price * 1.01 : price * 0.99;
+        // Apply 1% protective buffer on the best order book price to ensure market fills
+        if (tradeDirection === 'long') {
+          const bestAsk = orderBookAsks.length > 0 ? orderBookAsks[0].price : price;
+          orderExecPrice = bestAsk * 1.01;
+        } else {
+          const bestBid = orderBookBids.length > 0 ? orderBookBids[0].price : price;
+          orderExecPrice = bestBid * 0.99;
+        }
       }
 
       // Quantity calculation with exact sign & 1e18 precision
@@ -671,24 +695,26 @@ export default function ProTradePage() {
       // Re-sync subaccount state immediately
       refresh();
 
-      // Dispatch Conditional Orders to Relayer if any
+      // Dispatch Conditional Orders to local Relayer if running in dev environment
       if (takeProfit || stopLoss || trailingPct) {
         try {
-          await fetch('http://localhost:4000/register-order', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              productId,
-              side: tradeDirection,
-              amount: positionSizeAsset,
-              tpPrice: takeProfit ? parseFloat(takeProfit) : null,
-              slPrice: stopLoss ? parseFloat(stopLoss) : null,
-              trailPct: trailingPct ? parseFloat(trailingPct) : null,
-              entryPrice: price,
-            })
-          });
+          if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
+            await fetch('http://localhost:4000/register-order', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                productId,
+                side: tradeDirection,
+                amount: positionSizeAsset,
+                tpPrice: takeProfit ? parseFloat(takeProfit) : null,
+                slPrice: stopLoss ? parseFloat(stopLoss) : null,
+                trailPct: trailingPct ? parseFloat(trailingPct) : null,
+                entryPrice: price,
+              })
+            }).catch(() => null);
+          }
         } catch (e) {
-          console.error('[Relayer] Failed to register conditional order', e);
+          // Non-blocking relayer note
         }
       }
 
@@ -1261,12 +1287,20 @@ export default function ProTradePage() {
               {/* Asks (Sell Orders - Red) */}
               <div className="flex flex-col-reverse px-2 pb-2">
                 {orderBookAsks.map((ask, i) => (
-                  <div key={i} className="flex justify-between relative py-0.5 group hover:bg-white/5 cursor-pointer">
+                  <div
+                    key={i}
+                    onClick={() => {
+                      setLimitPrice(ask.price.toString());
+                      if (orderType === 'market') setOrderType('limit');
+                    }}
+                    title="Click to set limit price"
+                    className="flex justify-between relative py-0.5 group hover:bg-white/10 cursor-pointer transition-colors"
+                  >
                     <div
-                      className="absolute right-0 top-0 bottom-0 bg-red-500/10"
+                      className="absolute right-0 top-0 bottom-0 bg-red-500/15 group-hover:bg-red-500/25 transition-colors"
                       style={{ width: `${Math.min(100, Math.max(4, (ask.total / maxAskTotal) * 100))}%` }}
                     />
-                    <span className="text-red-400 z-10">
+                    <span className="text-red-400 z-10 font-medium">
                       {ask.price.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
                     </span>
                     <span className="text-gray-300 z-10">{ask.size}</span>
@@ -1276,22 +1310,34 @@ export default function ProTradePage() {
               </div>
 
               {/* Current Spread/Price */}
-              <div className="py-2 flex items-center justify-center gap-2 border-y border-white/5 bg-black/40">
-                <span className="text-lg font-bold text-green-400">
-                  {price.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
-                </span>
-                <span className="text-gray-500">${price.toFixed(2)}</span>
+              <div className="py-2 px-3 flex items-center justify-between border-y border-white/5 bg-black/40">
+                <div className="flex items-center gap-2">
+                  <span className={`text-base font-bold ${parseFloat(tickerStats.change24h) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    ${price.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
+                  </span>
+                </div>
+                <div className="text-[11px] text-gray-500 font-mono">
+                  Spread: <span className="text-gray-400">${Math.max(0, (orderBookAsks[0]?.price || price) - (orderBookBids[0]?.price || price)).toFixed(activeMarket.decimals)}</span>
+                </div>
               </div>
 
               {/* Bids (Buy Orders - Green) */}
               <div className="flex flex-col px-2 pt-2">
                 {orderBookBids.map((bid, i) => (
-                  <div key={i} className="flex justify-between relative py-0.5 group hover:bg-white/5 cursor-pointer">
+                  <div
+                    key={i}
+                    onClick={() => {
+                      setLimitPrice(bid.price.toString());
+                      if (orderType === 'market') setOrderType('limit');
+                    }}
+                    title="Click to set limit price"
+                    className="flex justify-between relative py-0.5 group hover:bg-white/10 cursor-pointer transition-colors"
+                  >
                     <div
-                      className="absolute right-0 top-0 bottom-0 bg-green-500/10"
+                      className="absolute right-0 top-0 bottom-0 bg-green-500/15 group-hover:bg-green-500/25 transition-colors"
                       style={{ width: `${Math.min(100, Math.max(4, (bid.total / maxBidTotal) * 100))}%` }}
                     />
-                    <span className="text-green-400 z-10">
+                    <span className="text-green-400 z-10 font-medium">
                       {bid.price.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
                     </span>
                     <span className="text-gray-300 z-10">{bid.size}</span>
@@ -1617,5 +1663,20 @@ export default function ProTradePage() {
         onSuccess={refresh}
       />
     </div>
+  );
+}
+
+export default function ProTradePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-background text-foreground flex items-center justify-center font-sans">
+          <Loader2 className="animate-spin text-primary mr-2" size={24} />
+          <span className="text-sm text-gray-400">Loading Nado Pro Terminal...</span>
+        </div>
+      }
+    >
+      <TradeContent />
+    </Suspense>
   );
 }

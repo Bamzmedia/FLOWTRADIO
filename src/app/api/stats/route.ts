@@ -20,13 +20,8 @@ export async function GET() {
   try {
     const { gateway, archive } = getNadoEndpoints();
 
-    // 1. Fetch live market prices and 24h ticker quotes from Binance & Nado
-    const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT", "LINKUSDT", "ARBUSDT", "DOGEUSDT"];
-    const [binanceRes, archiveRes, pingRes] = await Promise.allSettled([
-      fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`, {
-        next: { revalidate: 15 },
-        headers: { 'Accept': 'application/json' },
-      }),
+    // 1. Fetch live sequencer metrics and active contracts strictly from Nado Gateway & Archive
+    const [archiveRes, pingRes] = await Promise.allSettled([
       fetch(archive, {
         method: 'POST',
         headers: {
@@ -36,7 +31,7 @@ export async function GET() {
         body: JSON.stringify({ matches: { limit: 100 } }),
         cache: 'no-store',
       }),
-      fetch(`${gateway}/query?type=contracts`, {
+      fetch(`${gateway}/query?type=all_products`, {
         headers: { 'Accept-Encoding': 'gzip, br, deflate' },
         cache: 'no-store',
       }),
@@ -45,16 +40,6 @@ export async function GET() {
     // Calculate latency to Nado Sequencer / Gateway
     latencyMs = Math.max(8, Date.now() - startTime);
 
-    // Parse Binance quote volume
-    if (binanceRes.status === 'fulfilled' && binanceRes.value.ok) {
-      const bData = await binanceRes.value.json();
-      if (Array.isArray(bData) && bData.length > 0) {
-        const totalQuoteVol = bData.reduce((sum: number, item: any) => sum + (parseFloat(item.quoteVolume) || 0), 0);
-        if (totalQuoteVol > 0) {
-          volume24h = Math.round(totalQuoteVol);
-        }
-      }
-    }
 
     // Parse Nado Archive matches for active unique traders and executions
     if (archiveRes.status === 'fulfilled' && archiveRes.value.ok) {
@@ -75,12 +60,21 @@ export async function GET() {
       }
     }
 
-    // Parse contracts from Gateway for Open Interest if available
+    // Parse all_products from Gateway for authentic Open Interest in USD
     if (pingRes.status === 'fulfilled' && pingRes.value.ok) {
       const cData = await pingRes.value.json();
-      if (cData && Array.isArray(cData.data)) {
-        const totalOi = cData.data.reduce((acc: number, c: any) => acc + (parseFloat(c.open_interest_x18 || 0) / 1e18), 0);
-        if (totalOi > 0) openInterest = Math.round(totalOi);
+      if (cData?.data?.perp_products && Array.isArray(cData.data.perp_products)) {
+        let totalOiUsd = 0;
+        cData.data.perp_products.forEach((p: any) => {
+          const oi = parseFloat(p.state?.open_interest || '0') / 1e18;
+          const oraclePrice = parseFloat(p.oracle_price_x18 || '0') / 1e18;
+          if (oi > 0 && oraclePrice > 0) {
+            totalOiUsd += oi * oraclePrice;
+          }
+        });
+        if (totalOiUsd > 0) {
+          openInterest = Math.round(totalOiUsd);
+        }
       }
     }
 
