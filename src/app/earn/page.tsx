@@ -4,11 +4,11 @@ import React, { useState } from 'react';
 import Navbar from '@/components/Navbar';
 import { useLocalization } from '@/components/LocalizationContext';
 import { useWallet } from '@/components/WalletContext';
-import { Coins, Wallet, ArrowRight, ShieldCheck, TrendingUp, Pickaxe, Flame } from 'lucide-react';
+import { Coins, Wallet, ArrowRight, TrendingUp, Flame, Info } from 'lucide-react';
 
 const POOLS = [
-  { id: 'usdc', asset: 'USDC', name: 'USD Coin', apy: 8.2, tvl: 12500000, color: 'from-blue-500 to-indigo-600' },
-  { id: 'eth', asset: 'ETH', name: 'Ethereum', apy: 4.5, tvl: 38000000, color: 'from-purple-500 to-pink-500' },
+  { id: 'usdc', asset: 'USDC', name: 'USD Coin', apy: 8.2, tvl: 0, color: 'from-blue-500 to-indigo-600' },
+  { id: 'eth', asset: 'ETH', name: 'Ethereum', apy: 4.5, tvl: 0, color: 'from-purple-500 to-pink-500' },
 ];
 
 export default function EarnPage() {
@@ -36,7 +36,7 @@ export default function EarnPage() {
         asset: activePool.asset,
         network: network
       });
-      alert(`Successfully staked ${numAmount} ${activePool.asset}!`);
+      alert(`Successfully staked ${numAmount} ${activePool.asset} in Demo Pool!`);
     } else {
       if (numAmount > stakedBalances[activePool.id]) {
         alert("Insufficient staked balance!");
@@ -49,7 +49,7 @@ export default function EarnPage() {
         asset: activePool.asset,
         network: network
       });
-      alert(`Successfully unstaked ${numAmount} ${activePool.asset}!`);
+      alert(`Successfully unstaked ${numAmount} ${activePool.asset} from Demo Pool!`);
     }
     setAmount('');
   };
@@ -67,17 +67,21 @@ export default function EarnPage() {
 
         <div className="mb-10 text-center md:text-left flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div>
-            <h1 className="text-4xl md:text-5xl font-extrabold mb-4 tracking-tight">
-              Simple Earn
+            <h1 className="text-4xl md:text-5xl font-extrabold mb-4 tracking-tight flex items-center gap-4 justify-center md:justify-start">
+              Simple Earn 
+              <span className="text-sm font-bold bg-amber-500/20 text-amber-500 px-3 py-1 rounded-full border border-amber-500/30 tracking-normal align-middle uppercase">
+                Demo
+              </span>
             </h1>
             <p className="text-gray-400 text-lg max-w-2xl">
-              Put your assets to work. Stake tokens in our secure liquidity pools and earn daily yield with zero lock-up periods.
+              Simulate staking assets in our demo liquidity pools. 
+              This interface is for testing purposes only and does not interact with live smart contracts.
             </p>
           </div>
           
           {/* User's Staked Overview */}
           <div className="glass-panel px-8 py-5 rounded-3xl flex flex-col items-center md:items-end">
-            <span className="text-sm text-gray-400 mb-1 flex items-center gap-2"><TrendingUp size={16} className="text-green-400"/> My Staked Assets</span>
+            <span className="text-sm text-gray-400 mb-1 flex items-center gap-2"><TrendingUp size={16} className="text-green-400"/> My Staked Assets (Demo)</span>
             <span className="text-3xl font-bold text-white">{formatCurrency(isConnected ? totalStakedUsd : 0)}</span>
           </div>
         </div>
@@ -86,7 +90,7 @@ export default function EarnPage() {
           
           {/* Left Column: Pools List */}
           <div className="lg:col-span-2 space-y-4">
-            <h3 className="text-xl font-bold mb-4 flex items-center gap-2"><Flame size={20} className="text-orange-500"/> Available Pools</h3>
+            <h3 className="text-xl font-bold mb-4 flex items-center gap-2"><Flame size={20} className="text-orange-500"/> Demo Pools</h3>
             
             {POOLS.map((pool) => (
               <div 
@@ -101,19 +105,19 @@ export default function EarnPage() {
                       <span className="font-bold text-white text-xl">{pool.asset[0]}</span>
                     </div>
                     <div>
-                      <h4 className="text-xl font-bold text-white">{pool.asset}</h4>
+                      <h4 className="text-xl font-bold text-white">{pool.asset} <span className="text-xs text-gray-400 bg-white/5 px-2 py-0.5 rounded ml-2">DEMO</span></h4>
                       <span className="text-sm text-gray-400">{pool.name}</span>
                     </div>
                   </div>
 
                   <div className="flex gap-8 sm:gap-12">
                     <div>
-                      <div className="text-sm text-gray-400 mb-1">APY</div>
+                      <div className="text-sm text-gray-400 mb-1">Simulated APY</div>
                       <div className="text-2xl font-bold text-green-400">{pool.apy}%</div>
                     </div>
                     <div>
                       <div className="text-sm text-gray-400 mb-1">TVL</div>
-                      <div className="text-xl font-bold text-white">{formatCurrency(pool.tvl)}</div>
+                      <div className="text-xl font-bold text-gray-500">N/A</div>
                     </div>
                   </div>
                   
@@ -121,11 +125,13 @@ export default function EarnPage() {
               </div>
             ))}
 
-            <div className="mt-8 p-6 bg-primary/5 border border-primary/20 rounded-3xl flex gap-4">
-              <ShieldCheck size={32} className="text-primary shrink-0" />
+            <div className="mt-8 p-6 bg-amber-500/5 border border-amber-500/20 rounded-3xl flex gap-4">
+              <Info size={32} className="text-amber-500 shrink-0" />
               <div>
-                <h4 className="font-bold text-white mb-2">Audited & Secure</h4>
-                <p className="text-sm text-gray-400">All smart contracts are heavily audited by top security firms. However, staking always carries smart contract risk. Never stake more than you can afford to lose.</p>
+                <h4 className="font-bold text-amber-500 mb-2">Demo Environment Active</h4>
+                <p className="text-sm text-gray-400">
+                  This page is a simulated UI demonstration. There are no underlying smart contracts deployed for this feature yet. The numbers shown above are not real TVL metrics.
+                </p>
               </div>
             </div>
           </div>
@@ -138,7 +144,7 @@ export default function EarnPage() {
                 <div className={`w-8 h-8 rounded-full bg-gradient-to-tr ${activePool.color} flex items-center justify-center`}>
                   <span className="font-bold text-white text-xs">{activePool.asset[0]}</span>
                 </div>
-                <span className="font-bold text-lg">{activePool.asset} Pool</span>
+                <span className="font-bold text-lg">{activePool.asset} Demo</span>
               </div>
               <div className="text-green-400 font-bold bg-green-500/10 px-2 py-1 rounded text-sm">
                 {activePool.apy}% APY
@@ -176,14 +182,14 @@ export default function EarnPage() {
                     placeholder="0.0" 
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
-                    className="bg-transparent text-3xl font-bold outline-none w-full" 
+                    className="bg-transparent text-3xl font-bold outline-none w-full text-white" 
                   />
                   <button 
                     onClick={() => {
                       if (!isConnected) return;
                       setAmount(activeTab === 'stake' ? activeBalance.toString() : (stakedBalances[activePool.id] || 0).toString());
                     }} 
-                    className="text-xs font-bold text-primary bg-primary/10 px-2 py-1 rounded"
+                    className="text-xs font-bold text-primary bg-primary/10 px-2 py-1 rounded hover:bg-primary/20 transition-colors"
                   >
                     MAX
                   </button>
@@ -192,14 +198,14 @@ export default function EarnPage() {
 
               <div className="pt-4 space-y-2 border-t border-white/5">
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Daily Est. Yield</span>
+                  <span className="text-gray-400">Simulated Daily Yield</span>
                   <span className="font-bold text-green-400">
                     +{formatCurrency((parseFloat(amount || '0') * (activePool.apy / 100)) / 365)}
                   </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-400">Network Fee</span>
-                  <span className="font-bold text-white">$0.00</span>
+                  <span className="font-bold text-gray-500">None (Demo)</span>
                 </div>
               </div>
 
@@ -218,7 +224,7 @@ export default function EarnPage() {
                     : 'bg-primary text-background hover:bg-primary/80 shadow-primary/20'
                 }`}
               >
-                {!isConnected ? 'Connect Wallet' : activeTab === 'stake' ? `Stake ${activePool.asset}` : `Unstake ${activePool.asset}`}
+                {!isConnected ? 'Connect Wallet' : activeTab === 'stake' ? `Simulate Stake ${activePool.asset}` : `Simulate Unstake ${activePool.asset}`}
               </button>
             </div>
           </div>
