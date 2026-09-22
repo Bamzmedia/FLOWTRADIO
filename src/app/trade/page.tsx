@@ -99,6 +99,12 @@ function TradeContent() {
     volume24h: '0',
   });
 
+  const [activeMarketStats, setActiveMarketStats] = useState({
+    oraclePrice: 0,
+    fundingRate: '0.0000%',
+    openInterest: 0,
+  });
+
   const searchParams = useSearchParams();
   useEffect(() => {
     const marketParam = searchParams.get('market');
@@ -352,10 +358,12 @@ function TradeContent() {
 
     const syncLivePriceAndStats = async () => {
       try {
+        let currentPrice = price; // Fallback
         const res = await fetch(`/api/ticker?symbol=${activeMarket.id}&product_id=${activeProductId}`);
         if (res.ok) {
           const d = await res.json();
           if (d.price && d.price > 0 && isMounted) {
+            currentPrice = d.price;
             applyPriceUpdate(d.price);
             setTickerStats((prev) => ({
               change24h: d.change24h || prev.change24h,
@@ -363,6 +371,30 @@ function TradeContent() {
               low24h: d.low24h || prev.low24h,
               volume24h: d.volume24h || prev.volume24h,
             }));
+          }
+        }
+        
+        // Fetch live Pyth oracle price, Funding rate proxy, and Open Interest
+        const allProducts = await fetchNadoAllProducts();
+        if (allProducts && allProducts.perp_products && isMounted) {
+          const activeProduct = allProducts.perp_products.find((p: any) => p.product_id === activeProductId);
+          if (activeProduct) {
+            const oraclePrice = parseFloat(activeProduct.oracle_price_x18 || '0') / 1e18;
+            const openInterestAsset = parseFloat(activeProduct.state?.open_interest || '0') / 1e18;
+            
+            // Funding rate proxy based on premium to oracle price (hourly rate)
+            let fundingRate = '0.0000%';
+            if (oraclePrice > 0 && currentPrice > 0) {
+              const premium = (currentPrice - oraclePrice) / oraclePrice;
+              const hourlyRate = (premium / 24) * 100;
+              fundingRate = (hourlyRate > 0 ? '+' : '') + hourlyRate.toFixed(4) + '%';
+            }
+            
+            setActiveMarketStats({
+              oraclePrice,
+              fundingRate,
+              openInterest: openInterestAsset * currentPrice,
+            });
           }
         }
       } catch (err) {
@@ -990,6 +1022,12 @@ function TradeContent() {
             </span>
           </div>
           <div className="flex flex-col">
+            <span className="text-xs text-gray-500 flex items-center gap-1">Oracle (Pyth)</span>
+            <span className="font-bold text-gray-300">
+              ${activeMarketStats.oraclePrice > 0 ? activeMarketStats.oraclePrice.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals }) : '...'}
+            </span>
+          </div>
+          <div className="flex flex-col">
             <span className="text-xs text-gray-500">24h Change</span>
             <span className={`font-bold ${parseFloat(tickerStats.change24h) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {parseFloat(tickerStats.change24h) >= 0 ? '+' : ''}{tickerStats.change24h}%
@@ -1012,8 +1050,18 @@ function TradeContent() {
             <span className="font-bold">{tickerStats.volume24h}</span>
           </div>
           <div className="flex flex-col">
+            <span className="text-xs text-gray-500">Open Interest</span>
+            <span className="font-bold text-white">
+              {activeMarketStats.openInterest > 0 
+                ? `$${activeMarketStats.openInterest >= 1e6 ? (activeMarketStats.openInterest/1e6).toFixed(2) + 'M' : (activeMarketStats.openInterest/1e3).toFixed(2) + 'K'}`
+                : '...'}
+            </span>
+          </div>
+          <div className="flex flex-col">
             <span className="text-xs text-gray-500">Funding / Countdown</span>
-            <span className="font-bold text-yellow-400">0.0100% / {fundingCountdown}</span>
+            <span className={`font-bold ${activeMarketStats.fundingRate.startsWith('-') ? 'text-green-400' : 'text-yellow-400'}`}>
+              {activeMarketStats.fundingRate} / {fundingCountdown}
+            </span>
           </div>
 
           <button
