@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { Search, Star, TrendingUp, TrendingDown, ArrowRight, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Search, Star, TrendingUp, TrendingDown, ArrowRight, RefreshCw, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { useLocalization } from '@/components/LocalizationContext';
 import Navbar from '@/components/Navbar';
 import { useNadoMarketData } from '@/hooks/useNadoMarketData';
