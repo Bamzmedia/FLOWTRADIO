@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import Navbar from '@/components/Navbar';
 import { useWallet } from '@/components/WalletContext';
+import { useTransactionFeedback } from '@/components/TransactionFeedbackContext';
 import { ArrowDown, Settings, Wallet, Loader2, CheckCircle2, ChevronDown, RefreshCw } from 'lucide-react';
 
 const ASSETS = [
@@ -13,14 +13,16 @@ const ASSETS = [
 
 export default function SwapPage() {
   const { isConnected, balance, network, addTransaction } = useWallet();
+  const { simulateTransaction } = useTransactionFeedback();
   const [payAmount, setPayAmount] = useState('');
   const [receiveAsset, setReceiveAsset] = useState(ASSETS[0]);
   const [showAssetDropdown, setShowAssetDropdown] = useState(false);
   const [slippage, setSlippage] = useState(0.5);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [mounted, setMounted] = useState(false);
   
-  const [txState, setTxState] = useState<'idle' | 'confirming' | 'processing' | 'confirmed'>('idle');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -31,32 +33,27 @@ export default function SwapPage() {
   const minReceived = receiveAmount * (1 - slippage / 100);
   const networkFee = 0.05; // $0.05
 
-  const handleSwap = () => {
+  const handleSwap = async () => {
     if (!payAmount || parseFloat(payAmount) <= 0) return;
     
-    setTxState('confirming');
+    setIsSubmitting(true);
     
-    // Simulate wallet confirmation delay
-    setTimeout(() => {
-      setTxState('processing');
+    try {
+      await simulateTransaction(`Swap ${payAmount} USDC for ${receiveAsset.id}`);
       
-      // Simulate transaction processing
-      setTimeout(() => {
-        addTransaction({
-          type: 'Swap',
-          amount: -parseFloat(payAmount),
-          asset: 'USDC',
-          network: network,
-        });
-        setTxState('confirmed');
-        
-        // Reset after showing confirmed
-        setTimeout(() => {
-          setTxState('idle');
-          setPayAmount('');
-        }, 3000);
-      }, 2500);
-    }, 1500);
+      addTransaction({
+        type: 'Swap',
+        amount: -parseFloat(payAmount),
+        asset: 'USDC',
+        network: network,
+      });
+      
+      setPayAmount('');
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (!mounted) return null;
@@ -115,7 +112,7 @@ export default function SwapPage() {
                 value={payAmount}
                 onChange={(e) => setPayAmount(e.target.value)}
                 className="bg-transparent text-3xl font-bold outline-none w-full text-white"
-                disabled={txState !== 'idle'}
+                disabled={isSubmitting}
               />
               <div className="flex items-center gap-2 bg-black/60 px-3 py-2 rounded-xl shrink-0">
                 <div className="w-6 h-6 rounded-full bg-blue-500 shadow-lg shadow-blue-500/20 flex items-center justify-center text-xs font-bold text-white">U</div>
@@ -144,7 +141,7 @@ export default function SwapPage() {
               />
               <button 
                 onClick={() => setShowAssetDropdown(!showAssetDropdown)}
-                disabled={txState !== 'idle'}
+                disabled={isSubmitting}
                 className="flex items-center gap-2 bg-black/60 hover:bg-black/80 px-3 py-2 rounded-xl shrink-0 transition-colors"
               >
                 <div className="w-6 h-6 rounded-full bg-gradient-to-br from-gray-700 to-gray-900 flex items-center justify-center text-xs font-bold text-white shadow-inner">
@@ -210,39 +207,24 @@ export default function SwapPage() {
               >
                 <Wallet size={18} /> Connect Wallet to Swap
               </button>
-            ) : txState === 'idle' ? (
-              <button 
+            ) : (
+              <button
                 onClick={handleSwap}
-                disabled={!payAmount || parseFloat(payAmount) <= 0 || parseFloat(payAmount) > balance}
-                className={`w-full font-bold py-4 rounded-xl transition-all duration-300 shadow-lg flex justify-center items-center gap-2 ${
-                  (!payAmount || parseFloat(payAmount) <= 0 || parseFloat(payAmount) > balance) 
-                    ? 'bg-white/5 text-gray-500 cursor-not-allowed' 
-                    : 'bg-primary text-background hover:bg-primary/80 shadow-primary/20'
+                disabled={isSubmitting || !payAmount || parseFloat(payAmount) <= 0 || parseFloat(payAmount) > balance}
+                className={`w-full py-4 rounded-xl font-bold text-lg transition-all duration-300 shadow-xl flex justify-center items-center gap-2 ${
+                  isSubmitting ? 'bg-primary/50 text-white cursor-not-allowed' :
+                  !payAmount || parseFloat(payAmount) <= 0 || parseFloat(payAmount) > balance ? 'bg-white/10 text-gray-500 cursor-not-allowed' :
+                  'bg-primary text-background hover:bg-primary/90 shadow-[0_0_20px_rgba(0,240,255,0.3)]'
                 }`}
               >
-                {parseFloat(payAmount) > balance ? 'Insufficient USDC Balance' : 'Swap'}
+                {isSubmitting ? (
+                  <><Loader2 className="animate-spin" /> Swapping...</>
+                ) : parseFloat(payAmount) > balance ? (
+                  'Insufficient USDC Balance'
+                ) : (
+                  'Review Swap'
+                )}
               </button>
-            ) : (
-              <div className="w-full font-bold py-4 rounded-xl flex justify-center items-center gap-2 bg-black/40 border border-white/10 text-white">
-                {txState === 'confirming' && (
-                  <>
-                    <Loader2 size={18} className="animate-spin text-yellow-500" />
-                    Confirm in wallet...
-                  </>
-                )}
-                {txState === 'processing' && (
-                  <>
-                    <RefreshCw size={18} className="animate-spin text-primary" />
-                    Processing Swap...
-                  </>
-                )}
-                {txState === 'confirmed' && (
-                  <>
-                    <CheckCircle2 size={18} className="text-green-500" />
-                    <span className="text-green-500">Swap Confirmed!</span>
-                  </>
-                )}
-              </div>
             )}
           </div>
 

@@ -3,15 +3,18 @@
 import React, { useState } from 'react';
 import { useWallet } from '@/components/WalletContext';
 import { useLocalization } from '@/components/LocalizationContext';
+import { useTransactionFeedback } from '@/components/TransactionFeedbackContext';
 import Navbar from '@/components/Navbar';
-import { ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft, Clock, ShieldCheck, AlertCircle } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, ArrowRightLeft, Clock, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 
 export default function WalletPage() {
   const { isConnected, balance, network, transactions, addTransaction } = useWallet();
   const { formatCurrency, formatDate } = useLocalization();
+  const { simulateTransaction } = useTransactionFeedback();
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'transfer'>('deposit');
   const [amount, setAmount] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   if (!isConnected) {
     return (
@@ -26,7 +29,7 @@ export default function WalletPage() {
     );
   }
 
-  const handleAction = () => {
+  const handleAction = async () => {
     const numAmount = parseFloat(amount);
     if (!numAmount || numAmount <= 0) {
       alert("Please enter a valid amount!");
@@ -37,16 +40,24 @@ export default function WalletPage() {
       return;
     }
     
-    // Simulate transaction
-    addTransaction({
-      type: activeTab === 'deposit' ? 'Deposit' : activeTab === 'withdraw' ? 'Withdraw' : 'Transfer',
-      amount: numAmount,
-      asset: 'USDC',
-      network: network,
-    });
-    
-    alert(`Successfully submitted ${activeTab} request for ${numAmount} USDC!`);
-    setAmount('');
+    setIsSubmitting(true);
+    try {
+      const typeStr = activeTab === 'deposit' ? 'Deposit' : activeTab === 'withdraw' ? 'Withdraw' : 'Transfer';
+      await simulateTransaction(`${typeStr} ${numAmount} USDC`);
+      
+      addTransaction({
+        type: typeStr,
+        amount: activeTab === 'deposit' ? numAmount : -numAmount, // Make withdraw/transfer negative
+        asset: 'USDC',
+        network: network,
+      });
+      
+      setAmount('');
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -141,10 +152,21 @@ export default function WalletPage() {
 
               <button 
                 onClick={handleAction}
-                disabled={!amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && parseFloat(amount) > balance)}
-                className={`w-full font-bold py-4 rounded-2xl transition-all duration-300 shadow-lg flex justify-center items-center gap-2 ${(!amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && parseFloat(amount) > balance)) ? 'bg-white/5 text-gray-500 cursor-not-allowed' : 'bg-primary text-background hover:bg-primary/80 shadow-primary/20'}`}
+                disabled={isSubmitting || !amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && parseFloat(amount) > balance)}
+                className={`w-full py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${
+                  isSubmitting ? 'bg-primary/50 text-white cursor-not-allowed' :
+                  (!amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && parseFloat(amount) > balance)) 
+                    ? 'bg-white/10 text-gray-500 cursor-not-allowed' 
+                    : 'bg-primary text-background hover:bg-primary/90 shadow-[0_0_15px_rgba(0,240,255,0.4)]'
+                }`}
               >
-                {activeTab === 'deposit' ? 'Confirm Deposit' : activeTab === 'withdraw' ? 'Submit Withdrawal' : 'Transfer Funds'}
+                {isSubmitting ? (
+                  <><Loader2 className="animate-spin" /> Processing...</>
+                ) : activeTab === 'withdraw' && parseFloat(amount) > balance ? (
+                  'Insufficient Balance'
+                ) : (
+                  `Confirm ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`
+                )}
               </button>
             </div>
           </div>

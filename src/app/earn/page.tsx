@@ -4,7 +4,8 @@ import React, { useState } from 'react';
 import Navbar from '@/components/Navbar';
 import { useLocalization } from '@/components/LocalizationContext';
 import { useWallet } from '@/components/WalletContext';
-import { Coins, Wallet, ArrowRight, TrendingUp, Flame, Info } from 'lucide-react';
+import { useTransactionFeedback } from '@/components/TransactionFeedbackContext';
+import { Coins, Wallet, ArrowRight, TrendingUp, Flame, Info, Loader2 } from 'lucide-react';
 
 const POOLS = [
   { id: 'usdc', asset: 'USDC', name: 'USD Coin', apy: 8.2, tvl: 0, color: 'from-blue-500 to-indigo-600' },
@@ -18,40 +19,50 @@ export default function EarnPage() {
   const [activePool, setActivePool] = useState(POOLS[0]);
   const [activeTab, setActiveTab] = useState<'stake' | 'unstake'>('stake');
   const [amount, setAmount] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { simulateTransaction } = useTransactionFeedback();
   const activeBalance = activePool.asset === 'USDC' ? balance : (tokenBalances[activePool.asset] || 0);
 
-  const handleAction = () => {
+  const handleAction = async () => {
     const numAmount = parseFloat(amount);
     if (!numAmount || numAmount <= 0) return;
 
-    if (activeTab === 'stake') {
-      if (numAmount > activeBalance) {
-        alert(`Insufficient ${activePool.asset} balance!`);
-        return;
+    setIsSubmitting(true);
+    
+    try {
+      if (activeTab === 'stake') {
+        if (numAmount > activeBalance) {
+          alert(`Insufficient ${activePool.asset} balance!`);
+          return;
+        }
+        await simulateTransaction(`Stake ${numAmount} ${activePool.asset}`);
+        updateStakedBalance(activePool.id, numAmount);
+        addTransaction({
+          type: 'Stake',
+          amount: numAmount,
+          asset: activePool.asset,
+          network: network
+        });
+      } else {
+        if (numAmount > stakedBalances[activePool.id]) {
+          alert("Insufficient staked balance!");
+          return;
+        }
+        await simulateTransaction(`Unstake ${numAmount} ${activePool.asset}`);
+        updateStakedBalance(activePool.id, -numAmount);
+        addTransaction({
+          type: 'Unstake',
+          amount: numAmount,
+          asset: activePool.asset,
+          network: network
+        });
       }
-      updateStakedBalance(activePool.id, numAmount);
-      addTransaction({
-        type: 'Stake',
-        amount: numAmount,
-        asset: activePool.asset,
-        network: network
-      });
-      alert(`Successfully staked ${numAmount} ${activePool.asset} in Demo Pool!`);
-    } else {
-      if (numAmount > stakedBalances[activePool.id]) {
-        alert("Insufficient staked balance!");
-        return;
-      }
-      updateStakedBalance(activePool.id, -numAmount);
-      addTransaction({
-        type: 'Unstake',
-        amount: numAmount,
-        asset: activePool.asset,
-        network: network
-      });
-      alert(`Successfully unstaked ${numAmount} ${activePool.asset} from Demo Pool!`);
+      setAmount('');
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSubmitting(false);
     }
-    setAmount('');
   };
 
   const totalStakedUsd = Object.values(stakedBalances).reduce((acc, val) => acc + val, 0);
@@ -209,22 +220,23 @@ export default function EarnPage() {
                 </div>
               </div>
 
-              <button 
+              <button
                 onClick={handleAction}
-                disabled={
-                  !isConnected || 
-                  !amount || 
-                  parseFloat(amount) <= 0 || 
-                  (activeTab === 'stake' && parseFloat(amount) > activeBalance) ||
-                  (activeTab === 'unstake' && parseFloat(amount) > (stakedBalances[activePool.id] || 0))
-                }
-                className={`w-full mt-4 font-bold py-4 rounded-2xl transition-all duration-300 shadow-lg flex justify-center items-center gap-2 ${
-                  (!isConnected || !amount || parseFloat(amount) <= 0 || (activeTab === 'stake' && parseFloat(amount) > activeBalance) || (activeTab === 'unstake' && parseFloat(amount) > (stakedBalances[activePool.id] || 0))) 
-                    ? 'bg-white/5 text-gray-500 cursor-not-allowed' 
-                    : 'bg-primary text-background hover:bg-primary/80 shadow-primary/20'
+                disabled={isSubmitting || !isConnected || !amount || parseFloat(amount) <= 0 || (activeTab === 'stake' ? parseFloat(amount) > activeBalance : parseFloat(amount) > (stakedBalances[activePool.id] || 0))}
+                className={`w-full py-4 rounded-xl font-bold text-lg transition-all shadow-xl flex items-center justify-center gap-2 ${
+                  isSubmitting ? 'bg-primary/50 text-white cursor-not-allowed' :
+                  (!isConnected || !amount || parseFloat(amount) <= 0 || (activeTab === 'stake' ? parseFloat(amount) > activeBalance : parseFloat(amount) > (stakedBalances[activePool.id] || 0))) 
+                    ? 'bg-white/10 text-gray-500 cursor-not-allowed' 
+                    : 'bg-primary text-background hover:bg-primary/90 shadow-[0_0_15px_rgba(0,240,255,0.4)]'
                 }`}
               >
-                {!isConnected ? 'Connect Wallet' : activeTab === 'stake' ? `Simulate Stake ${activePool.asset}` : `Simulate Unstake ${activePool.asset}`}
+                {isSubmitting ? (
+                  <><Loader2 className="animate-spin" /> Processing...</>
+                ) : activeTab === 'stake' ? (
+                  parseFloat(amount) > activeBalance ? 'Insufficient Balance' : 'Confirm Stake'
+                ) : (
+                  parseFloat(amount) > (stakedBalances[activePool.id] || 0) ? 'Insufficient Staked Balance' : 'Confirm Unstake'
+                )}
               </button>
             </div>
           </div>

@@ -34,6 +34,7 @@ export const viewport: Viewport = {
 import { LocalizationProvider } from "@/components/LocalizationContext";
 import { WalletProvider } from "@/components/WalletContext";
 import { AppKitProvider } from "@/components/AppKitProvider";
+import { TransactionFeedbackProvider } from "@/components/TransactionFeedbackContext";
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
@@ -46,7 +47,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <LocalizationProvider>
           <AppKitProvider>
             <WalletProvider>
-              {children}
+              <TransactionFeedbackProvider>
+                {children}
+              </TransactionFeedbackProvider>
             </WalletProvider>
           </AppKitProvider>
         </LocalizationProvider>

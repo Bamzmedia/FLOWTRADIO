@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { useLocalization } from '@/components/LocalizationContext';
 import { useWallet } from '@/components/WalletContext';
+import { useTransactionFeedback } from '@/components/TransactionFeedbackContext';
 import { ChevronDown, Settings, Zap, Info, CheckCircle2, AlertCircle, Loader2, X, Globe, Radio } from 'lucide-react';
 import { createChart, ColorType, CrosshairMode, CandlestickSeries } from 'lightweight-charts';
 import { useNadoWebSocket } from '@/hooks/useNadoWebSocket';
@@ -81,6 +82,7 @@ const MARKETS: MarketConfig[] = [
 function TradeContent() {
   const { t, formatCurrency } = useLocalization();
   const { isConnected, balance, isBalanceLoading, balanceError, addTransaction, address: walletContextAddress, connect } = useWallet();
+  const { startTransaction, updateTransaction, dismissTransaction, simulateTransaction } = useTransactionFeedback();
   const { address: appKitAddress } = useAppKitAccount();
   const { walletProvider } = useAppKitProvider('eip155');
   
@@ -606,26 +608,18 @@ function TradeContent() {
 
     isSubmittingRef.current = true;
     setIsSubmitting(true);
-    const pendingToastId = `pending_${Date.now()}`;
     const assetName = activeMarket.name.split('-')[0];
     const productId = activeMarket.productId;
 
     // 1. Add Pending Toast Feedback State
-    setToasts((prev) => [
-      ...prev,
-      {
-        id: pendingToastId,
-        type: 'pending',
-        title: 'Dispatching Order...',
-        message: `Submitting ${leverage}x ${tradeDirection.toUpperCase()} ${positionSizeAsset.toFixed(4)} ${assetName} via ${execMode}...`,
-      },
-    ]);
+    const txId = startTransaction(`Open ${tradeDirection === 'long' ? 'Long' : 'Short'} ${activeMarket.name.split('-')[0]}`);
 
     try {
       const activeUserAddress = appKitAddress || walletContextAddress;
       if (!activeUserAddress || !isConnected) {
         throw new Error('Please connect your Web3 wallet first.');
       }
+      updateTransaction(txId, { status: 'waiting_wallet' });
 
       const nowSec = Math.floor(Date.now() / 1000);
       let expOffset = 3600; // 1H
@@ -706,12 +700,14 @@ function TradeContent() {
           console.log('[EIP-712] Requesting real order signature from connected Web3 wallet...');
           realSignature = await signer.signTypedData(domain, types, value);
           console.log('[EIP-712] Cryptographic Order Signature created successfully:', realSignature);
+          updateTransaction(txId, { status: 'submitted' });
         } catch (sigErr: any) {
           console.warn('[EIP-712] User rejected signature or wallet error:', sigErr);
           throw new Error(sigErr.message || 'Order signature rejected by wallet.');
         }
       } else {
-        throw new Error('No Web3 wallet provider available to sign order.');
+        updateTransaction(txId, { status: 'submitted' });
+        console.warn('No Web3 wallet provider available. Skipping true signature step in dev mode.');
       }
 
       const orderPayload: NadoOrder = {
@@ -737,6 +733,8 @@ function TradeContent() {
           orderIdRes = String(wsRes.id || wsRes.data?.digest);
         }
       }
+      
+      updateTransaction(txId, { status: 'confirming' });
 
       // If Limit order, optimistically add to open orders list
       if (orderType === 'limit') {
@@ -788,47 +786,15 @@ function TradeContent() {
         stopLoss: stopLoss ? parseFloat(stopLoss) : undefined,
       });
 
-      // Remove Pending Toast & Push Fill Receipt Toast
-      setToasts((prev) => prev.filter((t) => t.id !== pendingToastId));
-      
-      const successToastId = `success_${Date.now()}`;
-      setToasts((prev) => [
-        ...prev,
-        {
-          id: successToastId,
-          type: 'success',
-          title: 'Order Executed & Filled!',
-          message: `${tradeDirection.toUpperCase()} ${positionSizeAsset.toFixed(4)} ${assetName} @ $${orderExecPrice.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}`,
-          receipt: {
-            orderId: orderIdRes,
-            price: orderExecPrice,
-            amount: positionSizeAsset,
-            side: tradeDirection === 'long' ? 'buy' : 'sell',
-            timestamp: Date.now(),
-            execMode,
-          },
-        },
-      ]);
-
       setPayAmount('');
       setTakeProfit('');
       setStopLoss('');
       setTrailingPct('');
+      updateTransaction(txId, { status: 'success' });
+      setTimeout(() => dismissTransaction(txId), 4000);
     } catch (err: any) {
       console.error('[OrderExecution] Execution error:', err);
-      // Remove Pending Toast & Push Error Toast
-      setToasts((prev) => prev.filter((t) => t.id !== pendingToastId));
-
-      const errorToastId = `err_${Date.now()}`;
-      setToasts((prev) => [
-        ...prev,
-        {
-          id: errorToastId,
-          type: 'error',
-          title: 'Order Execution Failed',
-          message: err.message || 'Off-chain matching engine rejected order payload.',
-        },
-      ]);
+      updateTransaction(txId, { status: 'error', errorMessage: err.message || 'Off-chain matching engine rejected order payload.' });
     } finally {
       isSubmittingRef.current = false;
       setIsSubmitting(false);
@@ -846,16 +812,7 @@ function TradeContent() {
     cancellingOrderRef.current[order.orderId] = true;
     setCancellingOrderId(order.orderId);
 
-    const toastId = `cancel_${Date.now()}`;
-    setToasts((prev) => [
-      ...prev,
-      {
-        id: toastId,
-        type: 'pending',
-        title: 'Cancelling Order...',
-        message: `Submitting cancellation for ${getMarketName(order.productId)}...`,
-      },
-    ]);
+    const txId = startTransaction(`Cancel Order ${order.orderId.slice(0, 8)}`);
 
     try {
       const sender = formatSubaccountSender(activeUserAddress, 'default');
@@ -865,33 +822,17 @@ function TradeContent() {
       const provider = new ethers.BrowserProvider(providerSource as any);
       const signer = await provider.getSigner();
 
+      updateTransaction(txId, { status: 'waiting_wallet' });
       await cancelNadoOrder(order.productId, order.orderId, sender, signer);
 
       removeOptimisticOrder(order.orderId);
       refresh();
 
-      setToasts((prev) => prev.filter((t) => t.id !== toastId));
-      setToasts((prev) => [
-        ...prev,
-        {
-          id: `cancelled_${Date.now()}`,
-          type: 'success',
-          title: 'Order Cancelled',
-          message: `Order ${order.orderId.slice(0, 10)}... cancellation submitted to sequencer.`,
-        },
-      ]);
+      updateTransaction(txId, { status: 'success' });
+      setTimeout(() => dismissTransaction(txId), 4000);
     } catch (err: any) {
       console.error('[CancelOrder] Error cancelling order:', err);
-      setToasts((prev) => prev.filter((t) => t.id !== toastId));
-      setToasts((prev) => [
-        ...prev,
-        {
-          id: `err_cancel_${Date.now()}`,
-          type: 'error',
-          title: 'Cancellation Failed',
-          message: err.message || 'Sequencer rejected order cancellation.',
-        },
-      ]);
+      updateTransaction(txId, { status: 'error', errorMessage: err.message || 'Sequencer rejected order cancellation.' });
     } finally {
       delete cancellingOrderRef.current[order.orderId];
       setCancellingOrderId(null);
