@@ -31,6 +31,7 @@ export default function Navbar() {
     displayAddress,
     network,
     isWrongNetwork,
+    balance,
     connect,
     disconnect,
     setNetwork,
