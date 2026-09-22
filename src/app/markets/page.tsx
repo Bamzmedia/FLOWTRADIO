@@ -6,6 +6,7 @@ import { Search, Star, TrendingUp, TrendingDown, ArrowRight, RefreshCw, AlertCir
 import { useLocalization } from '@/components/LocalizationContext';
 import Navbar from '@/components/Navbar';
 import { useNadoMarketData } from '@/hooks/useNadoMarketData';
+import { useNadoWebSocket } from '@/hooks/useNadoWebSocket';
 
 type Market = {
   id: string;
@@ -35,11 +36,16 @@ export default function MarketsPage() {
   const [marketsData, setMarketsData] = useState<Market[]>(INITIAL_MARKETS);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isCachedData, setIsCachedData] = useState(false);
-  const [lastUpdatedTime, setLastUpdatedTime] = useState<string>('');
+  const [lastUpdatedTime, setLastUpdatedTime] = useState<number>(0);
+  const [timeAgo, setTimeAgo] = useState<string>('--');
+  const [apiError, setApiError] = useState<boolean>(false);
+  const [isInitialLoad, setIsInitialLoad] = useState<boolean>(true);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState<'all' | 'trending' | 'gainers' | 'losers' | 'watchlist'>('all');
   const [favorites, setFavorites] = useState<string[]>(['BTC', 'ETH']);
+
+  const { status: wsStatus } = useNadoWebSocket();
 
   // Subscribe to live Nado WebSocket market feeds for SOL-PERP (8), BTC-PERP (2), ETH-PERP (4)
   const { trades: liveTrades } = useNadoMarketData([8, 2, 4]);
@@ -61,7 +67,7 @@ export default function MarketsPage() {
             return m;
           })
         );
-        setLastUpdatedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        setLastUpdatedTime(Date.now());
       }
     });
   }, [liveTrades]);
@@ -76,6 +82,7 @@ export default function MarketsPage() {
         if (json.data && Array.isArray(json.data)) {
           setMarketsData(json.data);
           setIsCachedData(!!json.isFallback);
+          setApiError(false);
         }
       } else {
         throw new Error(`API status ${res.status}`);
@@ -83,10 +90,12 @@ export default function MarketsPage() {
     } catch (err) {
       console.warn("API fetch failed. Using cached fallback data.", err);
       setIsCachedData(true);
+      setApiError(true);
     }
 
-    setLastUpdatedTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    setLastUpdatedTime(Date.now());
     setIsRefreshing(false);
+    setIsInitialLoad(false);
   };
 
   useEffect(() => {
@@ -95,6 +104,19 @@ export default function MarketsPage() {
     const interval = setInterval(fetchPrices, 15000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!lastUpdatedTime) return;
+    const updateRelativeTime = () => {
+      const seconds = Math.floor((Date.now() - lastUpdatedTime) / 1000);
+      if (seconds < 60) setTimeAgo(`${seconds} sec ago`);
+      else setTimeAgo(`${Math.floor(seconds / 60)} min ago`);
+    };
+    
+    updateRelativeTime();
+    const interval = setInterval(updateRelativeTime, 1000);
+    return () => clearInterval(interval);
+  }, [lastUpdatedTime]);
 
   const toggleFavorite = (symbol: string) => {
     setFavorites(prev => 
@@ -187,22 +209,33 @@ export default function MarketsPage() {
         {/* Control Bar: Last Updated Timestamp, Rate-Lock Badge, & Refresh Button */}
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6 bg-black/40 border border-white/10 rounded-2xl p-4 glass-panel">
           <div className="flex items-center gap-3 text-sm">
-            <span className="text-gray-400 font-medium">
-              Last updated: <span className="text-white font-mono font-bold">{lastUpdatedTime || '--:--:--'}</span>
+            <span className="flex items-center gap-1.5 font-bold">
+              <span className={`w-2 h-2 rounded-full ${wsStatus === 'CONNECTED' ? 'bg-green-500 animate-pulse' : wsStatus === 'CONNECTING' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`} />
+              <span className={wsStatus === 'CONNECTED' ? 'text-green-400' : wsStatus === 'CONNECTING' ? 'text-yellow-400' : 'text-red-400'}>
+                {wsStatus === 'CONNECTED' ? 'Live' : wsStatus === 'CONNECTING' ? 'Reconnecting...' : 'Disconnected'}
+              </span>
             </span>
-            <span className="text-gray-600">|</span>
-            <span className="text-xs text-primary font-bold flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" /> WebSocket Live Feed
+            <span className="text-gray-600">·</span>
+            <span className="text-gray-400 font-medium">
+              Updated {lastUpdatedTime ? timeAgo : '--'}
             </span>
             
-            {isCachedData ? (
-              <span className="flex items-center gap-1.5 bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 px-2.5 py-1 rounded-full text-xs font-semibold">
-                <AlertCircle size={12} /> Using cached data
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5 bg-green-500/10 border border-green-500/30 text-green-400 px-2.5 py-1 rounded-full text-xs font-semibold">
-                <CheckCircle2 size={12} /> Live Rates
-              </span>
+            {apiError && (
+              <>
+                <span className="text-gray-600">·</span>
+                <span className="flex items-center gap-1.5 bg-red-500/10 border border-red-500/30 text-red-400 px-2.5 py-1 rounded-full text-xs font-semibold">
+                  <AlertCircle size={12} /> API Offline
+                </span>
+              </>
+            )}
+            
+            {isCachedData && !apiError && (
+              <>
+                <span className="text-gray-600">·</span>
+                <span className="flex items-center gap-1.5 bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 px-2.5 py-1 rounded-full text-xs font-semibold">
+                  <AlertCircle size={12} /> Cached Data
+                </span>
+              </>
             )}
           </div>
 
@@ -256,7 +289,20 @@ export default function MarketsPage() {
                 </tr>
               </thead>
               <tbody className="text-sm divide-y divide-white/5">
-                {filteredMarkets.length === 0 ? (
+                {isInitialLoad ? (
+                  Array(5).fill(0).map((_, i) => (
+                    <tr key={`skeleton-${i}`} className="animate-pulse">
+                      <td className="py-4 px-4"><div className="w-4 h-4 bg-white/10 rounded" /></td>
+                      <td className="py-4 px-4"><div className="h-8 bg-white/10 rounded w-24" /></td>
+                      <td className="py-4 px-4"><div className="h-4 bg-white/10 rounded w-16 ml-auto" /></td>
+                      <td className="py-4 px-4"><div className="h-4 bg-white/10 rounded w-12 ml-auto" /></td>
+                      <td className="py-4 px-4"><div className="h-4 bg-white/10 rounded w-16 ml-auto" /></td>
+                      <td className="py-4 px-4"><div className="h-4 bg-white/10 rounded w-12 ml-auto" /></td>
+                      <td className="py-4 px-4"><div className="h-4 bg-white/10 rounded w-16 ml-auto" /></td>
+                      <td className="py-4 px-4"><div className="h-8 bg-white/10 rounded-full w-20 ml-auto" /></td>
+                    </tr>
+                  ))
+                ) : filteredMarkets.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="py-12 text-center text-gray-500">
                       No markets found matching your criteria.
