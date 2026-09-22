@@ -129,6 +129,9 @@ function TradeContent() {
   const [trailingPct, setTrailingPct] = useState('');
   const [oneClick, setOneClick] = useState(false);
   const [payAmount, setPayAmount] = useState<string>('');
+  const [slippagePct, setSlippagePct] = useState<string>('1.0');
+  const [orderExpiration, setOrderExpiration] = useState<string>('1H');
+  const [stopTriggerPrice, setStopTriggerPrice] = useState<string>('');
   const [showSubaccountModal, setShowSubaccountModal] = useState(false);
   // Active Bottom Tab State
   const [activeTab, setActiveTab] = useState<'positions' | 'orders' | 'fills' | 'margin'>('positions');
@@ -227,18 +230,35 @@ function TradeContent() {
   // Derived calculations with precision & order type awareness
   const numPayAmount = parseFloat(payAmount) || 0;
   const positionSizeUsd = numPayAmount * leverage;
-  const activeOrderPrice =
-    (orderType === 'limit' || orderType === 'stop') && parseFloat(limitPrice) > 0
-      ? parseFloat(limitPrice)
-      : price;
+
+  let estimatedExecutionPrice = price;
+  if (orderType === 'market') {
+    const slippageMult = 1 + (parseFloat(slippagePct) || 1) / 100;
+    const bestAsk = liveOrderBooks[activeProductId]?.asks?.[0]?.[0] || price * 1.0003;
+    const bestBid = liveOrderBooks[activeProductId]?.bids?.[0]?.[0] || price * 0.9997;
+    estimatedExecutionPrice = tradeDirection === 'long' ? bestAsk * slippageMult : bestBid / slippageMult;
+  } else if (orderType === 'limit') {
+    estimatedExecutionPrice = parseFloat(limitPrice) || price;
+  } else if (orderType === 'stop') {
+    estimatedExecutionPrice = parseFloat(limitPrice) || parseFloat(stopTriggerPrice) || price;
+  }
+
+  const activeOrderPrice = estimatedExecutionPrice > 0 ? estimatedExecutionPrice : price;
   const positionSizeAsset = activeOrderPrice > 0 ? positionSizeUsd / activeOrderPrice : 0;
   const estimatedFee = positionSizeUsd * 0.0005; // 0.05% standard taker fee
   const liquidationPrice =
-    price > 0 && leverage > 0
+    activeOrderPrice > 0 && leverage > 0
       ? tradeDirection === 'long'
-        ? Math.max(0, price * (1 - (1 / leverage) * 0.9))
-        : price * (1 + (1 / leverage) * 0.9)
+        ? Math.max(0, activeOrderPrice * (1 - (1 / leverage) * 0.9))
+        : activeOrderPrice * (1 + (1 / leverage) * 0.9)
       : 0;
+
+  const expectedTpPnl = takeProfit && parseFloat(takeProfit) > 0
+    ? (parseFloat(takeProfit) - activeOrderPrice) * positionSizeAsset * (tradeDirection === 'long' ? 1 : -1)
+    : 0;
+  const expectedSlPnl = stopLoss && parseFloat(stopLoss) > 0
+    ? (parseFloat(stopLoss) - activeOrderPrice) * positionSizeAsset * (tradeDirection === 'long' ? 1 : -1)
+    : 0;
 
   // Real-time Order Book mapping from live Nado liquidity & WebSocket
   const currentBook = liveOrderBooks[activeProductId];
@@ -606,21 +626,27 @@ function TradeContent() {
       }
 
       const nowSec = Math.floor(Date.now() / 1000);
-      const expiration = (nowSec + 3600).toString(); // 1 hour order expiration
+      let expOffset = 3600; // 1H
+      if (orderExpiration === '15m') expOffset = 900;
+      else if (orderExpiration === '4H') expOffset = 14400;
+      else if (orderExpiration === '1D') expOffset = 86400;
+      const expiration = (nowSec + expOffset).toString();
       const nonce = getOrderNonce(); // Canonical Nado sequencer nonce (recv_time << 20)
       
       // Order execution price with slippage protection for market orders
       let orderExecPrice = price;
-      if (orderType === 'limit' || orderType === 'stop') {
+      if (orderType === 'limit') {
         orderExecPrice = parseFloat(limitPrice) || price;
+      } else if (orderType === 'stop') {
+        orderExecPrice = parseFloat(limitPrice) || parseFloat(stopTriggerPrice) || price;
       } else {
-        // Apply 1% protective buffer on the best order book price to ensure market fills
+        const slippageMult = 1 + (parseFloat(slippagePct) || 1) / 100;
         if (tradeDirection === 'long') {
           const bestAsk = orderBookAsks.length > 0 ? orderBookAsks[0].price : price;
-          orderExecPrice = bestAsk * 1.01;
+          orderExecPrice = bestAsk * slippageMult;
         } else {
           const bestBid = orderBookBids.length > 0 ? orderBookBids[0].price : price;
-          orderExecPrice = bestBid * 0.99;
+          orderExecPrice = bestBid / slippageMult;
         }
       }
 
@@ -1483,22 +1509,87 @@ function TradeContent() {
 
             <div className="space-y-4">
               
-              {/* Limit/Stop Price Inputs */}
-              {(orderType === 'limit' || orderType === 'stop') && (
+              {/* Dynamic Order Inputs based on Type */}
+              {orderType === 'market' && (
                 <div className="bg-black/40 border border-white/5 rounded-xl p-3 flex justify-between items-center focus-within:border-primary/50 transition-colors">
-                  <span className="text-gray-400 text-sm font-medium">Limit Price</span>
+                  <span className="text-gray-400 text-sm font-medium">Slippage Tolerance</span>
                   <div className="flex items-center gap-2">
                     <input 
                       type="number"
                       step="any"
-                      placeholder={price.toString()}
-                      value={limitPrice}
-                      onChange={(e) => setLimitPrice(e.target.value)}
-                      className="bg-transparent text-right font-bold outline-none w-28 text-white" 
+                      placeholder="1.0"
+                      value={slippagePct}
+                      onChange={(e) => setSlippagePct(e.target.value)}
+                      className="bg-transparent text-right font-bold outline-none w-16 text-white" 
                     />
-                    <span className="text-gray-500 text-sm">USD</span>
+                    <span className="text-gray-500 text-sm">%</span>
                   </div>
                 </div>
+              )}
+
+              {orderType === 'limit' && (
+                <>
+                  <div className="bg-black/40 border border-white/5 rounded-xl p-3 flex justify-between items-center focus-within:border-primary/50 transition-colors">
+                    <span className="text-gray-400 text-sm font-medium">Limit Price</span>
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="number"
+                        step="any"
+                        placeholder={price.toString()}
+                        value={limitPrice}
+                        onChange={(e) => setLimitPrice(e.target.value)}
+                        className="bg-transparent text-right font-bold outline-none w-28 text-white" 
+                      />
+                      <span className="text-gray-500 text-sm">USD</span>
+                    </div>
+                  </div>
+                  <div className="bg-black/40 border border-white/5 rounded-xl p-3 flex justify-between items-center focus-within:border-primary/50 transition-colors">
+                    <span className="text-gray-400 text-sm font-medium">Expiration</span>
+                    <select 
+                      value={orderExpiration}
+                      onChange={(e) => setOrderExpiration(e.target.value)}
+                      className="bg-transparent font-bold outline-none text-white text-right cursor-pointer"
+                    >
+                      <option value="15m" className="bg-[#050b14]">15 Minutes</option>
+                      <option value="1H" className="bg-[#050b14]">1 Hour</option>
+                      <option value="4H" className="bg-[#050b14]">4 Hours</option>
+                      <option value="1D" className="bg-[#050b14]">1 Day</option>
+                    </select>
+                  </div>
+                </>
+              )}
+
+              {orderType === 'stop' && (
+                <>
+                  <div className="bg-black/40 border border-white/5 rounded-xl p-3 flex justify-between items-center focus-within:border-primary/50 transition-colors">
+                    <span className="text-gray-400 text-sm font-medium">Trigger Price</span>
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="number"
+                        step="any"
+                        placeholder={price.toString()}
+                        value={stopTriggerPrice}
+                        onChange={(e) => setStopTriggerPrice(e.target.value)}
+                        className="bg-transparent text-right font-bold outline-none w-28 text-white" 
+                      />
+                      <span className="text-gray-500 text-sm">USD</span>
+                    </div>
+                  </div>
+                  <div className="bg-black/40 border border-white/5 rounded-xl p-3 flex justify-between items-center focus-within:border-primary/50 transition-colors">
+                    <span className="text-gray-400 text-sm font-medium">Execution Price</span>
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="number"
+                        step="any"
+                        placeholder="Market"
+                        value={limitPrice}
+                        onChange={(e) => setLimitPrice(e.target.value)}
+                        className="bg-transparent text-right font-bold outline-none w-28 text-white placeholder-gray-500" 
+                      />
+                      <span className="text-gray-500 text-sm">USD</span>
+                    </div>
+                  </div>
+                </>
               )}
 
               {/* Pay Amount Input */}
@@ -1513,11 +1604,11 @@ function TradeContent() {
                     placeholder="0.0" 
                     value={payAmount}
                     onChange={(e) => setPayAmount(e.target.value)}
-                    className="bg-transparent text-xl font-bold outline-none w-1/2" 
+                    className="bg-transparent text-xl font-bold outline-none w-1/2 text-white" 
                   />
                   <div className="flex items-center gap-1 glass-panel px-2 py-1 rounded text-sm">
                     <div className="w-3 h-3 rounded-full bg-blue-500" />
-                    <span className="font-semibold">USDC</span>
+                    <span className="font-semibold text-white">USDC</span>
                   </div>
                 </div>
               </div>
@@ -1555,8 +1646,8 @@ function TradeContent() {
                   <span className="font-bold text-white">{formatCurrency(positionSizeUsd)}</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-400">Required Margin</span>
-                  <span className="font-bold text-white">{formatCurrency(numPayAmount)}</span>
+                  <span className="text-gray-400">Est. Execution Price</span>
+                  <span className="font-bold text-white">${estimatedExecutionPrice.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Est. Taker Fee (0.05%)</span>
@@ -1584,26 +1675,42 @@ function TradeContent() {
                 
                 {showAdvanced && (
                   <div className="mt-4 space-y-3 p-4 bg-black/20 rounded-xl border border-white/5">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-400">Take Profit</span>
-                      <input 
-                        type="text" 
-                        placeholder="None" 
-                        value={takeProfit}
-                        onChange={(e) => setTakeProfit(e.target.value)}
-                        className="bg-black/40 border border-white/5 rounded px-2 py-1 text-sm w-24 text-right outline-none focus:border-primary/50" 
-                      />
+                    <div className="flex flex-col gap-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-400">Take Profit</span>
+                        <input 
+                          type="text" 
+                          placeholder="None" 
+                          value={takeProfit}
+                          onChange={(e) => setTakeProfit(e.target.value)}
+                          className="bg-black/40 border border-white/5 rounded px-2 py-1 text-sm w-24 text-right outline-none focus:border-primary/50 text-white" 
+                        />
+                      </div>
+                      {expectedTpPnl > 0 && (
+                        <div className="text-xs text-right text-green-400 font-bold">
+                          Expected PnL: +{formatCurrency(expectedTpPnl)}
+                        </div>
+                      )}
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-400">Stop Loss</span>
-                      <input 
-                        type="text" 
-                        placeholder="None" 
-                        value={stopLoss}
-                        onChange={(e) => setStopLoss(e.target.value)}
-                        className="bg-black/40 border border-white/5 rounded px-2 py-1 text-sm w-24 text-right outline-none focus:border-primary/50" 
-                      />
+
+                    <div className="flex flex-col gap-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm text-gray-400">Stop Loss</span>
+                        <input 
+                          type="text" 
+                          placeholder="None" 
+                          value={stopLoss}
+                          onChange={(e) => setStopLoss(e.target.value)}
+                          className="bg-black/40 border border-white/5 rounded px-2 py-1 text-sm w-24 text-right outline-none focus:border-primary/50 text-white" 
+                        />
+                      </div>
+                      {expectedSlPnl < 0 && (
+                        <div className="text-xs text-right text-red-400 font-bold">
+                          Expected PnL: {formatCurrency(expectedSlPnl)}
+                        </div>
+                      )}
                     </div>
+
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-gray-400">Trailing Stop (%)</span>
                       <input 
@@ -1611,7 +1718,7 @@ function TradeContent() {
                         placeholder="None" 
                         value={trailingPct}
                         onChange={(e) => setTrailingPct(e.target.value)}
-                        className="bg-black/40 border border-white/5 rounded px-2 py-1 text-sm w-24 text-right outline-none focus:border-primary/50" 
+                        className="bg-black/40 border border-white/5 rounded px-2 py-1 text-sm w-24 text-right outline-none focus:border-primary/50 text-white" 
                       />
                     </div>
                   </div>
