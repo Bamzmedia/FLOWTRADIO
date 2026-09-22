@@ -64,6 +64,8 @@ export function useNadoMarketData(productIds: number[], candlestickGranularity: 
   const [trades, setTrades] = useState<Record<number, ParsedMarketTrade[]>>({});
   const [candlesticks, setCandlesticks] = useState<Record<number, OHLCVBar[]>>({});
   const [livePrices, setLivePrices] = useState<Record<number, number>>({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [marketError, setMarketError] = useState<string | null>(null);
 
   const orderBooksRef = useRef<Record<number, OrderBookState>>({});
   orderBooksRef.current = orderBooks;
@@ -71,10 +73,13 @@ export function useNadoMarketData(productIds: number[], candlestickGranularity: 
   // 1. Instant REST Order Book, Trades, and Candlestick Snapshot hydration from Nado
   useEffect(() => {
     let isMounted = true;
+    setIsLoading(true);
+    setMarketError(null);
 
-    productIds.forEach(async (productId) => {
-      try {
-        const [snap, realTrades, ohlcv] = await Promise.allSettled([
+    Promise.allSettled(
+      productIds.map(async (productId) => {
+        try {
+          const [snap, realTrades, ohlcv] = await Promise.allSettled([
           fetchNadoLiquidity(productId, 15),
           fetchNadoMarketTrades(productId, 30),
           fetchHistoricalOHLCV(productId, '1h', 50),
@@ -126,10 +131,23 @@ export function useNadoMarketData(productIds: number[], candlestickGranularity: 
             [productId]: ohlcv.value,
           }));
         }
+
+        if (snap.status === 'rejected' && realTrades.status === 'rejected') {
+          throw new Error('All primary data sources failed');
+        }
       } catch (err) {
         console.warn(`[useNadoMarketData] Snapshot hydration failed for ${productId}:`, err);
+        throw err;
       }
-    });
+    })
+  ).then((results) => {
+    if (!isMounted) return;
+    const hasError = results.some(r => r.status === 'rejected');
+    if (hasError) {
+      setMarketError('Unable to load market data');
+    }
+    setIsLoading(false);
+  });
 
     return () => {
       isMounted = false;
@@ -283,6 +301,7 @@ export function useNadoMarketData(productIds: number[], candlestickGranularity: 
     trades,
     candlesticks,
     livePrices,
-    isLoading: isConnected && Object.keys(orderBooks).length === 0,
+    isLoading,
+    marketError,
   };
 }

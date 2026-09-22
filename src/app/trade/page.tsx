@@ -80,7 +80,7 @@ const MARKETS: MarketConfig[] = [
 
 function TradeContent() {
   const { t, formatCurrency } = useLocalization();
-  const { isConnected, balance, addTransaction, address: walletContextAddress, connect } = useWallet();
+  const { isConnected, balance, isBalanceLoading, balanceError, addTransaction, address: walletContextAddress, connect } = useWallet();
   const { address: appKitAddress } = useAppKitAccount();
   const { walletProvider } = useAppKitProvider('eip155');
   
@@ -181,12 +181,14 @@ function TradeContent() {
   };
   const currentGranularity = granularityMap[chartResolution] || 3600;
 
-  // Live Market Data stream via Nado WebSocket
+  // Live Market Data stream via Nado WebSocket & REST
   const {
     orderBooks: liveOrderBooks,
     trades: liveTradesMap,
     candlesticks: liveCandlesMap,
     livePrices,
+    isLoading: isMarketLoading,
+    marketError,
   } = useNadoMarketData(
     [activeProductId],
     currentGranularity
@@ -1044,7 +1046,7 @@ function TradeContent() {
           <div className="flex flex-col">
             <span className="text-xs text-gray-500">Market Price</span>
             <span className="font-bold text-white">
-              ${price.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}
+              {isMarketLoading ? '...' : `$${price.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}`}
             </span>
           </div>
           <div className="flex flex-col">
@@ -1120,7 +1122,22 @@ function TradeContent() {
             </div>
 
             {/* Chart Canvas */}
-            <div ref={chartContainerRef} className="flex-1 w-full relative" />
+            <div ref={chartContainerRef} className="flex-1 w-full relative">
+              {isMarketLoading && (
+                <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-10">
+                  <div className="flex items-center gap-2 text-primary font-bold text-sm">
+                    <Loader2 size={20} className="animate-spin" /> Loading Market Data...
+                  </div>
+                </div>
+              )}
+              {marketError && (
+                <div className="absolute inset-0 bg-red-950/40 backdrop-blur-sm flex items-center justify-center z-10">
+                  <div className="flex items-center gap-2 text-red-400 font-bold text-sm">
+                    <AlertCircle size={20} /> Failed to load market data: {marketError}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Bottom Tabs: Positions, Orders, Fills, Margin */}
             <div className="h-48 border-t border-white/5 flex flex-col bg-black/30">
@@ -1223,10 +1240,10 @@ function TradeContent() {
                               <td className="py-2 text-yellow-400 font-bold">${pos.marginUsage.toFixed(2)}</td>
                               <td className="py-2 text-right">
                                 <button
-                                  disabled={closingPositionId === pos.productId}
+                                  disabled={closingPositionId === pos.productId || isSubmitting || !isConnected || isAuthenticating || isBalanceLoading || isMarketLoading || !!marketError || !!balanceError}
                                   onClick={() => handleClosePosition(pos)}
                                   className={`px-2 py-0.5 bg-red-500/20 text-red-400 border border-red-500/30 rounded hover:bg-red-500 hover:text-white transition-all font-sans font-bold flex items-center gap-1 ${
-                                    closingPositionId === pos.productId ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                                    (closingPositionId === pos.productId || isSubmitting || !isConnected || isAuthenticating || isBalanceLoading || isMarketLoading || !!marketError || !!balanceError) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
                                   }`}
                                 >
                                   {closingPositionId === pos.productId && <Loader2 size={10} className="animate-spin" />}
@@ -1596,7 +1613,13 @@ function TradeContent() {
               <div className="bg-black/40 border border-white/5 rounded-xl p-3 focus-within:border-primary/50 transition-colors">
                 <div className="text-sm text-gray-400 mb-2 flex justify-between font-medium">
                   <span>Pay (Margin)</span>
-                  <span>Bal: {formatCurrency(subaccountInfo && subaccountInfo.freeCollateral > 0 ? subaccountInfo.freeCollateral : (isConnected ? balance : 0))}</span>
+                  {isAuthenticating || isBalanceLoading ? (
+                    <span className="flex items-center gap-1 text-xs text-gray-400"><Loader2 size={10} className="animate-spin" /> Loading...</span>
+                  ) : balanceError ? (
+                    <span className="text-red-400 flex items-center gap-1 text-xs"><AlertCircle size={10} /> Error (Retry)</span>
+                  ) : (
+                    <span>Bal: {formatCurrency(subaccountInfo && subaccountInfo.freeCollateral > 0 ? subaccountInfo.freeCollateral : (isConnected ? balance : 0))}</span>
+                  )}
                 </div>
                 <div className="flex justify-between items-center">
                   <input 
@@ -1727,7 +1750,7 @@ function TradeContent() {
             </div>
 
             <button 
-              disabled={isSubmitting}
+              disabled={isSubmitting || (isConnected && (isAuthenticating || isBalanceLoading || isMarketLoading || !!marketError || !!balanceError))}
               onClick={isConnected ? handleExecute : () => connect()}
               className={`w-full mt-6 font-bold py-3 rounded-xl transition-all duration-300 text-background shadow-lg flex items-center justify-center gap-2 ${
                 isSubmitting ? 'opacity-50 cursor-not-allowed bg-gray-500' :

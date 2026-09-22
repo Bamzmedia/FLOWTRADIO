@@ -41,6 +41,8 @@ export interface WalletState {
   chainId: number | null;
   isWrongNetwork: boolean;
   balance: number;
+  isBalanceLoading: boolean;
+  balanceError: string | null;
   transactions: Transaction[];
   stakedBalances: Record<string, number>;
   tokenBalances: Record<string, number>;
@@ -71,6 +73,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const [localNetwork, setLocalNetwork] = useState<Network>('Ink');
   const [balance, setBalance] = useState(0);
+  const [isBalanceLoading, setIsBalanceLoading] = useState(true);
+  const [balanceError, setBalanceError] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>(initialTransactions);
   const [stakedBalances, setStakedBalances] = useState<Record<string, number>>({
     usdc: 0,
@@ -218,9 +222,15 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   // 4. Fetch native balance on Ink
   const fetchBalance = useCallback(async () => {
-    if (!isConnected || !normalizedAddress) return;
+    if (!isConnected || !normalizedAddress) {
+      setIsBalanceLoading(false);
+      return;
+    }
 
     try {
+      setIsBalanceLoading(true);
+      setBalanceError(null);
+      
       const activeProviderSource = appKitProvider || (typeof window !== 'undefined' ? (window as any).ethereum : null);
       if (activeProviderSource) {
         const provider = new ethers.BrowserProvider(activeProviderSource as any);
@@ -235,6 +245,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setBalance(parseFloat(ethers.formatEther(balanceWei)));
     } catch (e) {
       console.warn('[WalletContext] Failed to fetch live wallet balance:', e);
+      setBalanceError('Unable to load balance');
+    } finally {
+      setIsBalanceLoading(false);
     }
   }, [isConnected, normalizedAddress, appKitProvider]);
 
@@ -405,6 +418,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         chainId: currentChainId,
         isWrongNetwork,
         balance,
+        isBalanceLoading,
+        balanceError,
         transactions,
         stakedBalances,
         tokenBalances,

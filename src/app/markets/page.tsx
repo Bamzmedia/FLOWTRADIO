@@ -126,7 +126,7 @@ export default function MarketsPage() {
 
   // Dynamic formatting for token prices
   const formatMarketPrice = (price: number) => {
-    if (price === 0) return "$0.00";
+    if (!price || price === 0) return null;
     let decimals = 2;
     if (price < 0.01) decimals = 6;
     else if (price < 1) decimals = 4;
@@ -289,7 +289,22 @@ export default function MarketsPage() {
                 </tr>
               </thead>
               <tbody className="text-sm divide-y divide-white/5">
-                {isInitialLoad ? (
+                {apiError ? (
+                  <tr>
+                    <td colSpan={8} className="py-12">
+                      <div className="flex flex-col items-center justify-center text-center space-y-4">
+                        <AlertCircle size={40} className="text-red-400" />
+                        <div>
+                          <h3 className="text-white font-bold text-lg mb-1">Unable to load market data</h3>
+                          <p className="text-gray-400 text-sm">There was an error retrieving prices and stats.</p>
+                        </div>
+                        <button onClick={fetchPrices} className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-white font-bold transition-all text-sm mt-2">
+                          Retry
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ) : isInitialLoad ? (
                   Array(5).fill(0).map((_, i) => (
                     <tr key={`skeleton-${i}`} className="animate-pulse">
                       <td className="py-4 px-4"><div className="w-4 h-4 bg-white/10 rounded" /></td>
@@ -337,8 +352,10 @@ export default function MarketsPage() {
                         </div>
                       </td>
                       
-                      <td className="py-4 px-4 text-right font-mono font-medium text-white overflow-hidden text-ellipsis">
-                        {formatMarketPrice(market.price)}
+                      <td className="py-4 px-4 font-bold text-white font-mono text-right">
+                        {formatMarketPrice(market.price) || (
+                          <span className="flex items-center justify-end text-gray-500 gap-1 text-xs"><Loader2 size={10} className="animate-spin" /> Loading</span>
+                        )}
                       </td>
                       
                       <td className="py-4 px-4 text-right font-mono font-medium overflow-hidden text-ellipsis">
