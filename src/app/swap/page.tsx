@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
+import Navbar from '@/components/Navbar';
 import { useWallet } from '@/components/WalletContext';
 import { useTransactionFeedback } from '@/components/TransactionFeedbackContext';
 import { ArrowDown, Settings, Wallet, Loader2, CheckCircle2, ChevronDown, RefreshCw } from 'lucide-react';
@@ -18,7 +19,6 @@ export default function SwapPage() {
   const [receiveAsset, setReceiveAsset] = useState(ASSETS[0]);
   const [showAssetDropdown, setShowAssetDropdown] = useState(false);
   const [slippage, setSlippage] = useState(0.5);
-  const [showSettings, setShowSettings] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [mounted, setMounted] = useState(false);
   
