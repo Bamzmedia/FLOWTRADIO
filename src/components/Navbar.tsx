@@ -179,6 +179,15 @@ export default function Navbar() {
                     </div>
 
                     <Link 
+                      href="/profile" 
+                      onClick={() => setShowProfileMenu(false)}
+                      className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/10 rounded-xl transition-colors text-sm font-medium w-full text-left"
+                    >
+                      <User size={16} className="text-gray-400" />
+                      <span>My Profile & History</span>
+                    </Link>
+
+                    <Link 
                       href="/wallet?tab=deposit" 
                       onClick={() => setShowProfileMenu(false)}
                       className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/10 rounded-xl transition-colors text-sm font-medium w-full text-left"
