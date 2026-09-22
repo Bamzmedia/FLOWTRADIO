@@ -257,6 +257,46 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(timer);
   }, [fetchBalance]);
 
+  // 4b. Fetch Nado trade history for connected address
+  useEffect(() => {
+    if (!normalizedAddress) return;
+    
+    // We need to fetch from the server API, padding sender address to match Nado subaccount format
+    const paddedName = "default".padEnd(12, "\0");
+    let nameHex = "";
+    for (let i = 0; i < 12; i++) {
+      nameHex += paddedName.charCodeAt(i).toString(16).padStart(2, "0");
+    }
+    const senderHex = "0x" + normalizedAddress.replace("0x", "") + nameHex;
+
+    fetch(`/api/profile/history?sender=${senderHex}`)
+      .then(res => res.json())
+      .then(json => {
+        if (json.data && Array.isArray(json.data)) {
+          const fetchedTxs: Transaction[] = json.data.map((fill: any) => {
+            const assetName = fill.product_id === 1 ? 'NADO/USDC' : fill.product_id === 2 ? 'ETH/USDC' : fill.product_id === 3 ? 'SOL/USDC' : fill.product_id === 4 ? 'BTC/USDC' : 'Trade';
+            return {
+              id: fill.fill_id || `fill-${Math.random()}`,
+              type: 'Trade',
+              amount: fill.amount,
+              asset: assetName,
+              date: new Date(fill.timestamp * 1000), // convert seconds to ms
+              status: 'Completed',
+              network: 'Ink'
+            };
+          });
+          
+          setTransactions(prev => {
+            const existingIds = new Set(prev.map(t => t.id));
+            const newTxs = fetchedTxs.filter(t => !existingIds.has(t.id));
+            if (newTxs.length === 0) return prev;
+            return [...newTxs, ...prev].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          });
+        }
+      })
+      .catch(err => console.warn('[WalletContext] Failed to fetch Nado history:', err));
+  }, [normalizedAddress]);
+
   // 5. Connect handler
   const connect = async (preferredProvider?: string) => {
     const eth = typeof window !== 'undefined' ? (window as any).ethereum : null;
