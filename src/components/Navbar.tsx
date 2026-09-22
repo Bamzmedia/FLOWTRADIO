@@ -99,18 +99,7 @@ export default function Navbar() {
         </div>
 
         <div className="flex items-center gap-3 relative">
-          {/* Wrong Network Warning Banner in Navbar */}
-          {isConnected && isWrongNetwork && (
-            <button
-              onClick={switchToInk}
-              className="flex items-center gap-1.5 bg-amber-500/15 border border-amber-500/40 hover:bg-amber-500/25 text-amber-300 px-3 py-1.5 rounded-full text-xs font-bold transition-all shadow-sm group"
-              title="Click to switch your wallet network to Ink (Chain ID: 57073)"
-            >
-              <AlertTriangle size={14} className="text-amber-400 animate-pulse" />
-              <span>Switch to Ink</span>
-            </button>
-          )}
-
+          {/* Settings Button */}
           <button 
             onClick={() => setShowSettings(true)}
             className="flex items-center gap-2 px-3 py-1.5 rounded-full glass-panel hover:bg-white/10 transition-all text-sm group"
@@ -131,81 +120,91 @@ export default function Navbar() {
               <span className="text-xs sm:text-sm font-bold">Connect Wallet</span>
             </button>
           ) : isConnected ? (
-            <div className="relative">
+            isWrongNetwork ? (
               <button 
-                onClick={() => setShowProfileMenu(!showProfileMenu)}
-                className={`flex items-center gap-2 bg-black/40 border ${isWrongNetwork ? 'border-amber-500/40 hover:border-amber-500/70' : 'border-primary/30 hover:border-primary/60'} text-white px-4 py-1.5 rounded-full font-bold transition-all`}
+                onClick={switchToInk}
+                className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/40 hover:border-amber-500/70 hover:bg-amber-500/20 text-amber-300 px-4 sm:px-5 py-2 rounded-full transition-all shadow-sm group font-bold"
               >
-                <div className={`w-5 h-5 rounded-full flex items-center justify-center ${isWrongNetwork ? 'bg-gradient-to-tr from-amber-400 to-red-500' : 'bg-gradient-to-tr from-green-400 to-blue-500'}`}>
-                  <User size={11} className="text-black" />
-                </div>
-                <span className="text-sm font-mono">{displayAddress || (address ? `${address.slice(0, 6)}...${address.slice(-4)}` : '')}</span>
-                <span className={`text-xs px-2 py-0.5 rounded-full ml-1 ${isWrongNetwork ? 'bg-amber-500/20 text-amber-300 font-bold' : 'bg-primary/10 text-primary'}`}>
-                  {isWrongNetwork ? 'Wrong Network' : network}
-                </span>
+                <AlertTriangle size={18} className="text-amber-400 animate-pulse" />
+                <span className="text-xs sm:text-sm">Switch to Nado Network</span>
               </button>
-              
-              {showProfileMenu && (
-                <div className="absolute top-12 right-0 glass-panel p-3 rounded-2xl flex flex-col w-60 shadow-2xl z-50 border border-white/10">
-                  {/* Address & Quick Copy */}
-                  <div className="px-3 py-2 bg-black/30 rounded-xl mb-2 flex items-center justify-between">
-                    <span className="text-xs font-mono text-gray-300 truncate max-w-[150px]">{displayAddress || address}</span>
+            ) : (
+              <div className="relative">
+                <button 
+                  onClick={() => setShowProfileMenu(!showProfileMenu)}
+                  className="flex items-center gap-2 bg-black/40 border border-primary/30 hover:border-primary/60 text-white pl-1.5 pr-4 py-1.5 rounded-full transition-all"
+                >
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-secondary flex items-center justify-center shadow-md">
+                    <Wallet size={14} className="text-black" />
+                  </div>
+                  <div className="flex flex-col items-start ml-1">
+                    <span className="text-sm font-bold font-mono leading-none tracking-wide text-white">
+                      {displayAddress || (address ? `${address.slice(0, 6)}...${address.slice(-4)}` : '')}
+                    </span>
+                    <span className="text-[11px] text-gray-400 leading-tight font-medium mt-0.5">
+                      Balance: {balance.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} USDC
+                    </span>
+                  </div>
+                </button>
+                
+                {showProfileMenu && (
+                  <div className="absolute top-14 right-0 glass-panel p-2 rounded-2xl flex flex-col w-56 shadow-2xl z-50 border border-white/10">
                     <button
-                      onClick={copyAddress}
-                      className="text-gray-400 hover:text-primary transition-colors p-1 rounded hover:bg-white/10"
-                      title="Copy full address"
+                      onClick={() => { copyAddress(); setShowProfileMenu(false); }}
+                      className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/10 rounded-xl transition-colors text-sm font-medium w-full text-left"
                     >
-                      {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+                      {copied ? <Check size={16} className="text-green-400" /> : <Copy size={16} className="text-gray-400" />}
+                      <span>{copied ? 'Copied!' : 'Copy address'}</span>
+                    </button>
+                    
+                    {address && (
+                      <a
+                        href={`https://explorer.inkonchain.com/address/${address}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/10 rounded-xl transition-colors text-sm font-medium w-full text-left"
+                      >
+                        <ExternalLink size={16} className="text-gray-400" />
+                        <span>View explorer</span>
+                      </a>
+                    )}
+                    
+                    <div className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium w-full text-left cursor-default">
+                      <div className="w-3 h-3 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)] flex-shrink-0" />
+                      <span>Nado Network</span>
+                    </div>
+
+                    <Link 
+                      href="/wallet?tab=deposit" 
+                      onClick={() => setShowProfileMenu(false)}
+                      className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/10 rounded-xl transition-colors text-sm font-medium w-full text-left"
+                    >
+                      <TrendingUp size={16} className="text-gray-400" />
+                      <span>Deposit</span>
+                    </Link>
+                    
+                    <Link 
+                      href="/wallet?tab=withdraw" 
+                      onClick={() => setShowProfileMenu(false)}
+                      className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/10 rounded-xl transition-colors text-sm font-medium w-full text-left"
+                    >
+                      <LogOut size={16} className="text-gray-400" />
+                      <span>Withdraw</span>
+                    </Link>
+
+                    <hr className="border-white/10 my-1 mx-1" />
+                    
+                    <button 
+                      onClick={() => { disconnect(); setShowProfileMenu(false); }}
+                      className="flex items-center gap-3 px-3 py-2.5 hover:bg-red-500/20 text-red-400 rounded-xl transition-colors text-sm font-medium w-full text-left"
+                    >
+                      <LogOut size={16} />
+                      <span>Disconnect</span>
                     </button>
                   </div>
-
-                  {address && (
-                    <a
-                      href={`https://explorer.inkonchain.com/address/${address}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-between px-3 py-2 hover:bg-white/10 rounded-xl transition-colors text-xs text-gray-400 hover:text-white mb-1"
-                    >
-                      <span>View on Ink Explorer</span>
-                      <ExternalLink size={12} />
-                    </a>
-                  )}
-
-                  {isWrongNetwork && (
-                    <button
-                      onClick={() => { switchToInk(); setShowProfileMenu(false); }}
-                      className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded-xl transition-colors text-xs font-bold w-full text-left mb-1"
-                    >
-                      <AlertTriangle size={14} /> Switch to Ink Network
-                    </button>
-                  )}
-
-                  <hr className="border-white/10 my-1 mx-1" />
-
-                  <Link 
-                    href="/profile" 
-                    onClick={() => setShowProfileMenu(false)}
-                    className="flex items-center gap-2 px-3 py-2 hover:bg-white/10 rounded-xl transition-colors text-sm font-medium"
-                  >
-                    <User size={16} /> My Profile
-                  </Link>
-                  <Link 
-                    href="/wallet" 
-                    onClick={() => setShowProfileMenu(false)}
-                    className="flex items-center gap-2 px-3 py-2 hover:bg-white/10 rounded-xl transition-colors text-sm font-medium"
-                  >
-                    <Wallet size={16} /> Wallet Dashboard
-                  </Link>
-                  <hr className="border-white/10 my-1 mx-1" />
-                  <button 
-                    onClick={() => { disconnect(); setShowProfileMenu(false); }}
-                    className="flex items-center gap-2 px-3 py-2 hover:bg-red-500/20 text-red-400 rounded-xl transition-colors text-sm font-medium w-full text-left"
-                  >
-                    <LogOut size={16} /> Disconnect
-                  </button>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )
           ) : (
             <button 
               onClick={() => setShowWalletModal(true)}
