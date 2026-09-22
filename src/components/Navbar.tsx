@@ -72,7 +72,10 @@ export default function Navbar() {
             <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-secondary flex items-center justify-center shadow-lg shadow-primary/20">
               <span className="font-bold text-white text-lg leading-none">N</span>
             </div>
-            <span className="text-xl font-bold tracking-wider">NEOTRADIO</span>
+            <div className="flex flex-col">
+              <span className="text-xl font-bold tracking-wider">Neotradio</span>
+              <span className="text-[10px] font-medium text-primary uppercase tracking-widest mt-[-2px]">Powered by Nado</span>
+            </div>
           </Link>
           
           <div className="hidden lg:flex gap-6 text-sm text-gray-400 font-medium">

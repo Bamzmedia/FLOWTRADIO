@@ -4,6 +4,7 @@ import React, { useState, useRef } from 'react';
 import { X, ArrowDownRight, ArrowUpRight, ShieldCheck, Loader2, Info, AlertTriangle } from 'lucide-react';
 import { useWallet } from './WalletContext';
 import { ethers } from 'ethers';
+import { withdrawCollateral } from '../nado/nadoApi';
 
 interface SubaccountModalProps {
   isOpen: boolean;
@@ -82,30 +83,50 @@ export default function SubaccountModal({
       const provider = new ethers.BrowserProvider(providerSource);
       const signer = await provider.getSigner();
 
-      const endpointAbi = [
-        'function depositCollateral(bytes32 subaccount, uint32 productId, uint128 amount) external',
-        'function withdrawCollateral(bytes32 subaccount, uint32 productId, uint128 amount) external',
-      ];
-      const contract = new ethers.Contract(endpointContract!, endpointAbi, signer);
-
-      const cleanAddr = (await signer.getAddress()).replace(/^0x/, '').toLowerCase();
-      const nameHex = Buffer.from(subaccountName, 'utf-8').toString('hex').padEnd(24, '0').slice(0, 24);
-      const subaccountBytes32 = '0x' + (cleanAddr + nameHex).slice(0, 64);
-      const amountX18 = ethers.parseUnits(numAmount.toFixed(18), 18);
-
       if (mode === 'deposit') {
-        const tx = await contract.depositCollateral(subaccountBytes32, 0, amountX18);
+        const usdcContract = process.env.NEXT_PUBLIC_NADO_USDC_CONTRACT || '0x0200C29006150606B650577BBE7B6248F58470c1';
+        const erc20Abi = [
+          'function approve(address spender, uint256 amount) public returns (bool)',
+          'function allowance(address owner, address spender) public view returns (uint256)'
+        ];
+        const token = new ethers.Contract(usdcContract, erc20Abi, signer);
+        const tokenAmount = ethers.parseUnits(numAmount.toFixed(6), 6); // USDC is 6 decimals
+
+        const currentAllowance = await token.allowance(await signer.getAddress(), endpointContract!);
+        if (currentAllowance < tokenAmount) {
+          setFeedback({ type: 'info', msg: 'Approving USDC for Nado Endpoint...' });
+          const txApprove = await token.approve(endpointContract!, tokenAmount);
+          await txApprove.wait();
+        }
+
+        setFeedback({ type: 'info', msg: 'Depositing USDC on Ink Mainnet...' });
+        
+        const endpointAbi = [
+          'function depositCollateral(bytes12 subaccountName, uint32 productId, uint128 amount) external',
+        ];
+        const endpoint = new ethers.Contract(endpointContract!, endpointAbi, signer);
+        
+        // Convert 'default' to bytes12
+        const nameHex = Buffer.from(subaccountName, 'utf-8').toString('hex').padEnd(24, '0').slice(0, 24);
+        const subaccountBytes12 = '0x' + nameHex;
+
+        const tx = await endpoint.depositCollateral(subaccountBytes12, 0, tokenAmount);
         await tx.wait();
         setFeedback({
           type: 'success',
           msg: `Deposit of $${numAmount.toFixed(2)} USDC confirmed on Ink!`,
         });
       } else {
-        const tx = await contract.withdrawCollateral(subaccountBytes32, 0, amountX18);
-        await tx.wait();
+        // Off-chain withdrawal via sequencer
+        setFeedback({ type: 'info', msg: 'Signing withdrawal request...' });
+        const sender = await signer.getAddress();
+        const amountX18 = ethers.parseUnits(numAmount.toFixed(18), 18).toString();
+        
+        await withdrawCollateral(0, amountX18, sender, signer);
+        
         setFeedback({
           type: 'success',
-          msg: `Withdrawal of $${numAmount.toFixed(2)} USDC confirmed on Ink!`,
+          msg: `Withdrawal of $${numAmount.toFixed(2)} USDC submitted to Nado!`,
         });
       }
 

@@ -103,12 +103,12 @@ export default function LandingPage() {
           <h1 className="text-5xl md:text-7xl lg:text-8xl font-extrabold tracking-tighter mb-8 leading-tight">
             Trade the future <br/>
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary via-secondary to-accent animate-gradient-x">
-              with NEOTRADIO
+              on Neotradio
             </span>
           </h1>
 
           <p className="text-lg md:text-xl text-gray-400 max-w-2xl mb-12 font-medium leading-relaxed">
-            The most advanced decentralized perpetual exchange. Access up to 100x leverage on Crypto, FX, and Commodities with sub-second execution latency.
+            The institutional-grade decentralized perpetual exchange powered by Nado. Access up to 100x leverage on Crypto, FX, and Commodities with sub-second execution latency on the Ink Layer-2.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center gap-6">
@@ -222,11 +222,19 @@ export default function LandingPage() {
       {/* FOOTER */}
       <footer className="border-t border-white/5 bg-black/40 py-12">
         <div className="max-w-7xl mx-auto px-6 md:px-12 flex flex-col md:flex-row justify-between items-center gap-6">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-primary to-secondary flex items-center justify-center shadow-lg shadow-primary/20">
-              <Activity size={18} className="text-background" />
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-secondary flex items-center justify-center">
+                <span className="font-bold text-white text-lg">N</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="font-extrabold text-xl tracking-tight">Neotradio</span>
+                <span className="text-[10px] font-medium text-primary uppercase tracking-widest mt-[-2px]">Powered by Nado</span>
+              </div>
             </div>
-            <span className="font-extrabold text-xl tracking-tight">NEOTRADIO</span>
+            <p className="text-gray-400 text-sm">
+              Institutional-grade performance built on the Ink network.
+            </p>
           </div>
           
           <div className="flex items-center gap-6 text-sm font-semibold text-gray-500">

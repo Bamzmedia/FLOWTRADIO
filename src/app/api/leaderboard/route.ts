@@ -11,7 +11,7 @@ export async function GET() {
     }
     throw new Error('API not available yet');
   } catch (error) {
-    // Fallback: Return top competitive traders on NEOTRADIO
+    // Fallback: Return top competitive traders on Neotradio
     const fallbackTraders: any[] = [];
 
     return NextResponse.json({

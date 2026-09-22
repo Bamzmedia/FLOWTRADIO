@@ -177,7 +177,7 @@ export default function ProfilePage() {
             <User size={48} className="text-gray-600" />
           </div>
           <h1 className="text-3xl font-bold mb-4">Connect Wallet</h1>
-          <p className="text-gray-400 mb-8 max-w-md">You need to connect your wallet to view your personalized trading profile and history.</p>
+          <p className="text-gray-400 mb-8 max-w-md">You need to connect your wallet to view your trading profile and history.</p>
         </main>
       </div>
     );

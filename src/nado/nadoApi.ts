@@ -611,4 +611,63 @@ export async function cancelNadoOrder(
   return await executeNadoAction(payload);
 }
 
+/**
+ * Request off-chain withdrawal of collateral from Nado Sequencer via EIP-712 signature.
+ */
+export async function withdrawCollateral(
+  productId: number,
+  amountX18: string,
+  sender: string,
+  signer: any
+): Promise<any> {
+  const nonce = getOrderNonce();
+  const chainId = parseInt(process.env.NEXT_PUBLIC_NADO_CHAIN_ID || '57073', 10);
+  const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT;
 
+  const domain: {
+    name: string;
+    version: string;
+    chainId: number;
+    verifyingContract?: string;
+  } = {
+    name: 'Nado',
+    version: '0.1.0',
+    chainId,
+  };
+
+  if (endpointContract && endpointContract !== '0x0000000000000000000000000000000000000000') {
+    domain.verifyingContract = endpointContract;
+  }
+
+  const types = {
+    WithdrawCollateral: [
+      { name: 'sender', type: 'bytes32' },
+      { name: 'productId', type: 'uint32' },
+      { name: 'amount', type: 'uint128' },
+      { name: 'nonce', type: 'uint64' },
+    ],
+  };
+
+  const value = {
+    sender,
+    productId,
+    amount: BigInt(amountX18),
+    nonce: BigInt(nonce),
+  };
+
+  const signature = await signer.signTypedData(domain, types, value);
+
+  const payload = {
+    withdraw_collateral: {
+      tx: {
+        sender,
+        productId,
+        amount: amountX18,
+        nonce,
+      },
+      signature,
+    },
+  };
+
+  return await executeNadoAction(payload);
+}
