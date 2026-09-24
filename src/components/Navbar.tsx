@@ -17,7 +17,8 @@ import {
   TrendingUp,
   BarChart2,
   Coins,
-  Trophy
+  Trophy,
+  RefreshCw
 } from 'lucide-react';
 import { useLocalization } from '@/components/LocalizationContext';
 import { useWallet, Network } from '@/components/WalletContext';
@@ -32,10 +33,17 @@ export default function Navbar() {
     network,
     isWrongNetwork,
     balance,
+    nadoBalance,
+    nadoCollateral,
+    nadoFreeCollateral,
+    walletUsdcBalance,
+    ethBalance,
+    isBalanceLoading,
     connect,
     disconnect,
     setNetwork,
     switchToInk,
+    refetchBalance,
   } = useWallet();
   
   const [mounted, setMounted] = useState(false);
@@ -145,14 +153,77 @@ export default function Navbar() {
                     <span className="text-sm font-bold font-mono leading-none tracking-wide text-white">
                       {displayAddress || (address ? `${address.slice(0, 6)}...${address.slice(-4)}` : '')}
                     </span>
-                    <span className="text-[11px] text-gray-400 leading-tight font-medium mt-0.5">
-                      Balance: {balance.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} USDC
+                    <span className="text-[11px] text-gray-400 leading-tight font-medium mt-0.5 flex items-center gap-1">
+                      {isBalanceLoading && nadoCollateral === 0 && walletUsdcBalance === 0 ? (
+                        <span className="text-primary animate-pulse text-[10px]">Loading balance...</span>
+                      ) : (
+                        <>
+                          <span className="text-gray-400">Nado:</span>
+                          <span className="text-white font-bold font-mono">
+                            ${nadoBalance.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                          </span>
+                        </>
+                      )}
                     </span>
                   </div>
                 </button>
                 
                 {showProfileMenu && (
-                  <div className="absolute top-14 right-0 glass-panel p-2 rounded-2xl flex flex-col w-56 shadow-2xl z-50 border border-white/10">
+                  <div className="absolute top-14 right-0 glass-panel p-2 rounded-2xl flex flex-col w-72 shadow-2xl z-50 border border-white/10">
+                    {/* Account Asset Breakdown Card */}
+                    <div className="p-3 bg-black/50 rounded-xl mb-2 border border-white/10 space-y-2.5">
+                      <div className="flex items-center justify-between pb-1 border-b border-white/5">
+                        <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Account Assets</span>
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); refetchBalance(); }} 
+                          title="Refresh balance" 
+                          className="text-gray-400 hover:text-primary transition-colors text-[10px] flex items-center gap-1"
+                        >
+                          <RefreshCw size={10} className={isBalanceLoading ? "animate-spin" : ""} /> Refresh
+                        </button>
+                      </div>
+
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-gray-300 flex items-center gap-1.5 font-medium">
+                          <span className="w-2 h-2 rounded-full bg-primary shadow-[0_0_6px_rgba(0,240,255,0.6)]" /> Nado DEX Collateral
+                        </span>
+                        <span className="font-bold text-primary font-mono">
+                          ${nadoCollateral.toFixed(2)} USDC
+                        </span>
+                      </div>
+
+                      {nadoCollateral > 0 && (
+                        <div className="flex justify-between items-center text-[10px] text-gray-400 pl-3.5">
+                          <span>Free Trading Margin</span>
+                          <span className="text-green-400 font-mono">${nadoFreeCollateral.toFixed(2)}</span>
+                        </div>
+                      )}
+
+                      <div className="flex justify-between items-center text-xs pt-1 border-t border-white/5">
+                        <span className="text-gray-300 flex items-center gap-1.5 font-medium">
+                          <span className="w-2 h-2 rounded-full bg-blue-400" /> MetaMask Wallet
+                        </span>
+                        <span className="font-bold text-white font-mono">
+                          ${walletUsdcBalance.toFixed(2)} USDC
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-gray-400 pl-3.5">Ink Gas Reserve</span>
+                        <span className="font-medium text-gray-300 font-mono text-[11px]">
+                          {ethBalance.toFixed(4)} ETH
+                        </span>
+                      </div>
+
+                      <Link
+                        href="/wallet"
+                        onClick={() => setShowProfileMenu(false)}
+                        className="mt-2 block w-full py-1.5 text-center text-xs font-bold text-background bg-primary hover:bg-primary/90 rounded-lg transition-all shadow-[0_0_10px_rgba(0,240,255,0.3)]"
+                      >
+                        Manage & Deposit Assets →
+                      </Link>
+                    </div>
+
                     <button
                       onClick={() => { copyAddress(); setShowProfileMenu(false); }}
                       className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/10 rounded-xl transition-colors text-sm font-medium w-full text-left"
@@ -268,14 +339,24 @@ export default function Navbar() {
           <div className="pt-6 border-t border-white/10 flex flex-col gap-3 mt-6">
             {isConnected ? (
               <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between p-3 bg-black/40 rounded-xl border border-white/10">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-green-400 to-blue-500 flex items-center justify-center">
-                      <User size={14} className="text-black" />
+                <div className="flex flex-col gap-2 p-3 bg-black/40 rounded-xl border border-white/10">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-green-400 to-blue-500 flex items-center justify-center">
+                        <User size={14} className="text-black" />
+                      </div>
+                      <span className="font-mono text-sm">{displayAddress || address}</span>
                     </div>
-                    <span className="font-mono text-sm">{displayAddress || address}</span>
+                    <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold">{network}</span>
                   </div>
-                  <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold">{network}</span>
+                  <div className="flex justify-between items-center text-xs pt-1.5 border-t border-white/5">
+                    <span className="text-gray-400">Nado DEX:</span>
+                    <span className="font-mono font-bold text-primary">${nadoBalance.toFixed(2)} USDC</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-gray-400">MetaMask:</span>
+                    <span className="font-mono font-medium text-white">${walletUsdcBalance.toFixed(2)} USDC</span>
+                  </div>
                 </div>
                 <button
                   onClick={() => { disconnect(); setIsMobileMenuOpen(false); }}

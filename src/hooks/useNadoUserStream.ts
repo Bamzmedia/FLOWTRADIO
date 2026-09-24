@@ -5,21 +5,21 @@ import { ethers } from 'ethers';
 import { useAppKitAccount, useAppKitProvider } from '@reown/appkit/react';
 import { useNadoWebSocket } from './useNadoWebSocket';
 import { WSOrderUpdate, WSFillUpdate, WSSubaccountInfoUpdate, WSPositionChangeUpdate } from '../types/nado';
-import { fetchNadoSubaccountInfo, fetchNadoOpenOrders, fetchPastFills } from '../nado/nadoApi';
+import { fetchNadoSubaccountInfo, fetchNadoOpenOrders, fetchPastFills, getSubaccountHex, parseSubaccountBalances } from '../nado/nadoApi';
 
-// Converts a base-18 fixed-point integer string (X18) to a float
+// Converts a base-18 fixed-point integer string (X18) or number to a float
 const parseX18 = (val: string | number): number => {
   if (typeof val === 'number') return val;
   if (!val) return 0;
-  if (val.includes('.')) return parseFloat(val);
-  return parseFloat(val) / 1e18;
+  const num = parseFloat(val);
+  if (isNaN(num)) return 0;
+  if (num > 1e14) return num / 1e18;
+  return num;
 };
 
 // Formats a 20-byte address + 12-byte subaccount name into a 32-byte hex string (bytes32)
 export function formatSubaccountSender(address: string, subaccountName: string = 'default'): string {
-  const cleanAddr = address.replace(/^0x/, '').toLowerCase();
-  const nameHex = Buffer.from(subaccountName, 'utf-8').toString('hex').padEnd(24, '0').slice(0, 24);
-  return '0x' + (cleanAddr + nameHex).slice(0, 64);
+  return getSubaccountHex(address, subaccountName);
 }
 
 export interface ParsedUserOrder {
@@ -223,25 +223,7 @@ export function useNadoUserStream() {
 
       if (subInfo.status === 'fulfilled' && subInfo.value) {
         const data = subInfo.value;
-        let totalCollateral = 0;
-        let freeCollateral = 0;
-        let marginUsage = 0;
-
-        if (data.spot_balances && Array.isArray(data.spot_balances)) {
-          // Product 0 is Primary Collateral (USDC)
-          const usdcBalance = data.spot_balances.find((b: any) => b.product_id === 0);
-          if (usdcBalance && usdcBalance.balance?.amount) {
-            totalCollateral = parseX18(usdcBalance.balance.amount);
-          }
-        }
-
-        if (data.healths && Array.isArray(data.healths) && data.healths.length > 0) {
-          const initialHealth = parseX18(data.healths[0].health);
-          freeCollateral = initialHealth > 0 ? initialHealth : 0;
-          marginUsage = parseX18(data.healths[0].liabilities);
-        } else {
-          freeCollateral = totalCollateral;
-        }
+        const parsed = parseSubaccountBalances(data);
 
         const newPositions: Record<number, ParsedSubaccountPosition> = {};
         if (data.perp_balances && Array.isArray(data.perp_balances)) {
@@ -262,9 +244,9 @@ export function useNadoUserStream() {
         }
 
         setSubaccountInfo({
-          collateral: totalCollateral,
-          freeCollateral: freeCollateral,
-          marginUsage: marginUsage,
+          collateral: parsed.totalCollateral,
+          freeCollateral: parsed.freeCollateral,
+          marginUsage: parsed.marginUsage,
           timestamp: Date.now(),
         });
 

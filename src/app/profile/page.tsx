@@ -4,26 +4,46 @@ import React, { useEffect, useRef, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import { useLocalization } from '@/components/LocalizationContext';
 import { useWallet } from '@/components/WalletContext';
-import { User, Activity, Edit3, Target, Award, Wallet, ArrowUpRight, ArrowDownRight, Clock, ShieldAlert } from 'lucide-react';
-import { fetchSubaccountState, fetchPastFills } from '@/nado/nadoApi';
+import { User, Activity, Edit3, Target, Award, Wallet, ArrowUpRight, ArrowDownRight, Clock, ShieldAlert, Check, X } from 'lucide-react';
+import { fetchSubaccountState, fetchPastFills, getSubaccountHex } from '@/nado/nadoApi';
 import { SubaccountState, PastFill } from '@/types/nado';
 import { createChart, IChartApi, ISeriesApi, LineData, AreaSeries } from 'lightweight-charts';
 
 const parseX18 = (val: string | number): number => {
   if (typeof val === 'number') return val;
   if (!val) return 0;
-  if (val.includes('.')) return parseFloat(val);
-  return parseFloat(val) / 1e18;
+  const num = parseFloat(val);
+  if (isNaN(num)) return 0;
+  if (num > 1e14) return num / 1e18;
+  return num;
 };
 
 export default function ProfilePage() {
   const { formatCurrency } = useLocalization();
-  const { isConnected, address, network } = useWallet();
+  const { isConnected, address, network, nadoCollateral, nadoFreeCollateral } = useWallet();
 
   const [subaccount, setSubaccount] = useState<SubaccountState | null>(null);
   const [fills, setFills] = useState<PastFill[]>([]);
   const [stats, setStats] = useState({ totalPnL: 0, winRate: 0, totalVolume: 0 });
   const [isLoading, setIsLoading] = useState(true);
+  const [profileName, setProfileName] = useState("AnonTrader");
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [draftName, setDraftName] = useState("");
+
+  useEffect(() => {
+    if (address) {
+      const saved = localStorage.getItem(`nado_profile_name_${address}`);
+      if (saved) setProfileName(saved);
+    }
+  }, [address]);
+
+  const handleSaveName = () => {
+    if (draftName.trim().length > 0) {
+      setProfileName(draftName.trim());
+      if (address) localStorage.setItem(`nado_profile_name_${address}`, draftName.trim());
+    }
+    setIsEditingName(false);
+  };
   
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -37,12 +57,7 @@ export default function ProfilePage() {
       setIsLoading(true);
       
       try {
-        const paddedName = "default".padEnd(12, "\0");
-        let nameHex = "";
-        for (let i = 0; i < 12; i++) {
-          nameHex += paddedName.charCodeAt(i).toString(16).padStart(2, "0");
-        }
-        const senderHex = "0x" + address.replace("0x", "") + nameHex;
+        const senderHex = getSubaccountHex(address, 'default');
         
         // Parallel fetching
         const [stateRes, fillsRes] = await Promise.allSettled([
@@ -183,9 +198,13 @@ export default function ProfilePage() {
     );
   }
 
-  const collateral = subaccount ? parseX18(subaccount.collateral) : 0;
-  const freeCollateral = subaccount ? parseX18(subaccount.free_collateral) : 0;
-  const marginUsage = subaccount ? parseX18(subaccount.margin_usage) : 0;
+  const parsedCollat = subaccount ? parseX18(subaccount.collateral) : 0;
+  const parsedFree = subaccount ? parseX18(subaccount.free_collateral) : 0;
+  const parsedMargin = subaccount ? parseX18(subaccount.margin_usage) : 0;
+
+  const collateral = parsedCollat > 0 ? parsedCollat : nadoCollateral;
+  const freeCollateral = parsedFree > 0 ? parsedFree : nadoFreeCollateral;
+  const marginUsage = parsedMargin;
   const marginUsagePct = collateral > 0 ? (marginUsage / collateral) * 100 : 0;
 
   return (
@@ -218,8 +237,35 @@ export default function ProfilePage() {
 
                 <div className="flex-1 text-center md:text-left">
                   <div className="flex items-center justify-center md:justify-start gap-3 mb-2">
-                    <h1 className="text-3xl font-bold">AnonTrader</h1>
-                    <button className="text-gray-500 hover:text-white transition-colors"><Edit3 size={16}/></button>
+                    {isEditingName ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={draftName}
+                          onChange={(e) => setDraftName(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleSaveName()}
+                          className="bg-background/50 border border-primary/30 rounded-lg px-3 py-1.5 text-white font-bold text-xl md:text-2xl w-48 focus:outline-none focus:border-primary"
+                          autoFocus
+                          maxLength={20}
+                        />
+                        <button onClick={handleSaveName} className="text-green-400 hover:text-green-300 transition-colors p-1 bg-green-400/10 rounded-lg">
+                          <Check size={18} />
+                        </button>
+                        <button onClick={() => setIsEditingName(false)} className="text-red-400 hover:text-red-300 transition-colors p-1 bg-red-400/10 rounded-lg">
+                          <X size={18} />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <h1 className="text-3xl font-bold">{profileName}</h1>
+                        <button 
+                          onClick={() => { setDraftName(profileName); setIsEditingName(true); }}
+                          className="text-gray-500 hover:text-white transition-colors"
+                        >
+                          <Edit3 size={16}/>
+                        </button>
+                      </>
+                    )}
                   </div>
                   <div className="flex flex-col md:flex-row items-center gap-4 text-sm text-gray-400 mb-6">
                     <span className="bg-white/5 px-3 py-1 rounded-full font-mono border border-white/10">{address}</span>

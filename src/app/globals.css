@@ -66,3 +66,14 @@ body {
 @keyframes gradient-x { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }  
 .animate-fade-in-up { animation: fade-in-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards; }  
 .animate-gradient-x { background-size: 200% 200%; animation: gradient-x 4s ease infinite; } 
+
+@keyframes aura {
+  0% { transform: translate(0, 0) rotate(0deg) scale(1); }
+  33% { transform: translate(5%, -5%) rotate(120deg) scale(1.1); }
+  66% { transform: translate(-5%, 5%) rotate(240deg) scale(0.95); }
+  100% { transform: translate(0, 0) rotate(360deg) scale(1); }
+}
+
+.animate-aura-1 { animation: aura 20s infinite ease-in-out alternate; }
+.animate-aura-2 { animation: aura 25s infinite ease-in-out alternate-reverse; }
+.animate-aura-3 { animation: aura 22s infinite ease-in-out alternate; }

@@ -4,6 +4,8 @@ import React, { createContext, useContext, useState, ReactNode, useEffect, useCa
 import { ethers } from 'ethers';
 import { useAppKit, useAppKitAccount, useAppKitNetwork, useAppKitProvider, useDisconnect } from '@reown/appkit/react';
 import { ink } from '@reown/appkit/networks';
+import { getSubaccountHex, fetchNadoSubaccountInfo, parseSubaccountBalances, fetchUserNadoPortfolio } from '../nado/nadoApi';
+import { NadoSpotAsset, NadoPerpPosition } from '../types/nado';
 
 export type Network = 'Ink';
 
@@ -40,7 +42,18 @@ export interface WalletState {
   network: Network;
   chainId: number | null;
   isWrongNetwork: boolean;
-  balance: number;
+  balance: number; // Primary Nado DEX balance
+  nadoBalance: number; // Live free trading margin on Nado DEX
+  nadoCollateral: number; // Total account collateral / equity on Nado
+  nadoFreeCollateral: number; // Available/free collateral on Nado
+  nadoMarginUsage: number; // Locked margin in active positions on Nado
+  nadoSpotAssets: NadoSpotAsset[]; // Spot tokens deposited into Nado DEX
+  nadoPositions: NadoPerpPosition[]; // Open perpetual contracts on Nado
+  subaccountNames: string[]; // User subaccount names found on Nado
+  activeSubaccount: string; // Currently active subaccount hex
+  setActiveSubaccount: (subaccountHex: string) => void;
+  walletUsdcBalance: number; // On-chain USDC in MetaMask wallet
+  ethBalance: number; // Native ETH for gas on Ink
   isBalanceLoading: boolean;
   balanceError: string | null;
   transactions: Transaction[];
@@ -50,6 +63,7 @@ export interface WalletState {
   disconnect: () => void;
   setNetwork: (network: Network) => void;
   switchToInk: () => Promise<boolean>;
+  refetchBalance: () => Promise<void>;
   addTransaction: (tx: Omit<Transaction, 'id' | 'date' | 'status'>) => void;
   updateStakedBalance: (poolId: string, amount: number) => void;
   updateTokenBalance: (tokenId: string, amount: number) => void;
@@ -73,6 +87,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const [localNetwork, setLocalNetwork] = useState<Network>('Ink');
   const [balance, setBalance] = useState(0);
+  const [nadoBalance, setNadoBalance] = useState(0);
+  const [nadoCollateral, setNadoCollateral] = useState(0);
+  const [nadoFreeCollateral, setNadoFreeCollateral] = useState(0);
+  const [nadoMarginUsage, setNadoMarginUsage] = useState(0);
+  const [nadoSpotAssets, setNadoSpotAssets] = useState<NadoSpotAsset[]>([]);
+  const [nadoPositions, setNadoPositions] = useState<NadoPerpPosition[]>([]);
+  const [subaccountNames, setSubaccountNames] = useState<string[]>([]);
+  const [activeSubaccount, setActiveSubaccount] = useState<string>('default');
+  const [walletUsdcBalance, setWalletUsdcBalance] = useState(0);
+  const [ethBalance, setEthBalance] = useState(0);
   const [isBalanceLoading, setIsBalanceLoading] = useState(true);
   const [balanceError, setBalanceError] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>(initialTransactions);
@@ -220,7 +244,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [balance, transactions, stakedBalances, tokenBalances, localNetwork, isHydrated]);
 
-  // 4. Fetch native balance on Ink
+  // 4. Live Multi-Source Balance Fetcher: Discovers all Nado Subaccounts + Spot Assets + Perp Positions + Wallet On-Chain USDC + Native ETH
   const fetchBalance = useCallback(async () => {
     if (!isConnected || !normalizedAddress) {
       setIsBalanceLoading(false);
@@ -230,44 +254,109 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     try {
       setIsBalanceLoading(true);
       setBalanceError(null);
-      
-      const activeProviderSource = appKitProvider || (typeof window !== 'undefined' ? (window as any).ethereum : null);
-      if (activeProviderSource) {
-        const provider = new ethers.BrowserProvider(activeProviderSource as any);
-        const balanceWei = await provider.getBalance(normalizedAddress);
-        setBalance(parseFloat(ethers.formatEther(balanceWei)));
-        return;
-      }
-      
-      // Fallback: query Ink public RPC directly
+
       const rpcProvider = new ethers.JsonRpcProvider('https://rpc-gel.inkonchain.com');
-      const balanceWei = await rpcProvider.getBalance(normalizedAddress);
-      setBalance(parseFloat(ethers.formatEther(balanceWei)));
+      const erc20Abi = ['function balanceOf(address) view returns (uint256)'];
+      const usdcContract1 = process.env.NEXT_PUBLIC_NADO_USDC_CONTRACT || '0x0200C29006150606B650577BBE7B6248F58470c1';
+      const usdcContract2 = '0x2d270e6886d130d724215a266106e6832161eaed';
+
+      const token1 = new ethers.Contract(usdcContract1, erc20Abi, rpcProvider);
+      const token2 = new ethers.Contract(usdcContract2, erc20Abi, rpcProvider);
+
+      // Parallel async query: Nado Portfolio (all subaccounts + spot assets + perps) + On-chain USDC + On-chain ETH
+      const [portfolioRes, usdc1Res, usdc2Res, ethRes] = await Promise.allSettled([
+        fetchUserNadoPortfolio(normalizedAddress),
+        token1.balanceOf(normalizedAddress),
+        token2.balanceOf(normalizedAddress),
+        rpcProvider.getBalance(normalizedAddress),
+      ]);
+
+      // 1. Process Nado Portfolio (subaccounts, spot assets, perps, collateral)
+      let liveNadoTotal = 0;
+      let liveNadoFree = 0;
+      let liveNadoMargin = 0;
+      let liveSpots: NadoSpotAsset[] = [];
+      let livePerps: NadoPerpPosition[] = [];
+      let subs: string[] = [];
+      let activeSub = 'default';
+
+      if (portfolioRes.status === 'fulfilled' && portfolioRes.value) {
+        const p = portfolioRes.value;
+        liveNadoTotal = p.totalCollateral;
+        liveNadoFree = p.freeCollateral;
+        liveNadoMargin = p.marginUsage;
+        liveSpots = p.spotAssets;
+        livePerps = p.perpPositions;
+        subs = p.allSubaccounts;
+        activeSub = p.subaccountHex;
+      }
+
+      // 2. Process On-Chain Wallet USDC Balances (6 decimals)
+      let walletUsdc = 0;
+      if (usdc1Res.status === 'fulfilled' && usdc1Res.value) {
+        walletUsdc += parseFloat(ethers.formatUnits(usdc1Res.value, 6));
+      }
+      if (usdc2Res.status === 'fulfilled' && usdc2Res.value) {
+        walletUsdc += parseFloat(ethers.formatUnits(usdc2Res.value, 6));
+      }
+
+      // 3. Process Native Gas (ETH on Ink)
+      let ethBal = 0;
+      if (ethRes.status === 'fulfilled' && ethRes.value) {
+        ethBal = parseFloat(ethers.formatEther(ethRes.value));
+      }
+
+      // 4. Update individual states
+      setNadoCollateral(liveNadoTotal);
+      setNadoFreeCollateral(liveNadoFree);
+      setNadoMarginUsage(liveNadoMargin);
+      setNadoSpotAssets(liveSpots);
+      setNadoPositions(livePerps);
+      setSubaccountNames(subs);
+      setActiveSubaccount(activeSub);
+
+      const activeNadoBal = liveNadoFree > 0 ? liveNadoFree : liveNadoTotal;
+      setNadoBalance(activeNadoBal);
+      setWalletUsdcBalance(walletUsdc);
+      setEthBalance(ethBal);
+
+      // Primary DEX balance is STRICTLY the live Nado balance! Never falsely show wallet balance as Nado!
+      setBalance(activeNadoBal);
+
+      setTokenBalances((prev) => ({
+        ...prev,
+        ETH: ethBal,
+        USDC: walletUsdc,
+        NADO: activeNadoBal,
+      }));
     } catch (e) {
-      console.warn('[WalletContext] Failed to fetch live wallet balance:', e);
+      console.warn('[WalletContext] Failed to fetch live wallet/Nado balances:', e);
       setBalanceError('Unable to load balance');
     } finally {
       setIsBalanceLoading(false);
     }
-  }, [isConnected, normalizedAddress, appKitProvider]);
+  }, [isConnected, normalizedAddress]);
 
   useEffect(() => {
     fetchBalance();
-    const timer = setInterval(fetchBalance, 15000);
-    return () => clearInterval(timer);
+    const timer = setInterval(fetchBalance, 10000);
+    const handleFocus = () => fetchBalance();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', handleFocus);
+    }
+    return () => {
+      clearInterval(timer);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', handleFocus);
+      }
+    };
   }, [fetchBalance]);
 
   // 4b. Fetch Nado trade history for connected address
   useEffect(() => {
     if (!normalizedAddress) return;
     
-    // We need to fetch from the server API, padding sender address to match Nado subaccount format
-    const paddedName = "default".padEnd(12, "\0");
-    let nameHex = "";
-    for (let i = 0; i < 12; i++) {
-      nameHex += paddedName.charCodeAt(i).toString(16).padStart(2, "0");
-    }
-    const senderHex = "0x" + normalizedAddress.replace("0x", "") + nameHex;
+    const senderHex = getSubaccountHex(normalizedAddress, 'default');
 
     fetch(`/api/profile/history?sender=${senderHex}`)
       .then(res => res.json())
@@ -362,6 +451,16 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
     
     setBalance(0);
+    setNadoBalance(0);
+    setNadoCollateral(0);
+    setNadoFreeCollateral(0);
+    setNadoMarginUsage(0);
+    setNadoSpotAssets([]);
+    setNadoPositions([]);
+    setSubaccountNames([]);
+    setActiveSubaccount('default');
+    setWalletUsdcBalance(0);
+    setEthBalance(0);
   };
 
   // 7. Network Switcher to Ink (57073 / 0xdef1)
@@ -458,6 +557,17 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         chainId: currentChainId,
         isWrongNetwork,
         balance,
+        nadoBalance,
+        nadoCollateral,
+        nadoFreeCollateral,
+        nadoMarginUsage,
+        nadoSpotAssets,
+        nadoPositions,
+        subaccountNames,
+        activeSubaccount,
+        setActiveSubaccount,
+        walletUsdcBalance,
+        ethBalance,
         isBalanceLoading,
         balanceError,
         transactions,
@@ -467,6 +577,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         disconnect,
         setNetwork,
         switchToInk,
+        refetchBalance: fetchBalance,
         addTransaction,
         updateStakedBalance,
         updateTokenBalance,

@@ -83,10 +83,10 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-background text-foreground font-sans flex flex-col relative overflow-hidden">
       
-      {/* Background Ambient Glows */}
-      <div className="absolute top-[-10%] left-[-10%] w-[600px] h-[600px] bg-primary/20 rounded-full blur-[150px] -z-10 mix-blend-screen animate-pulse duration-10000 pointer-events-none" />
-      <div className="absolute bottom-[-20%] right-[-10%] w-[800px] h-[800px] bg-secondary/10 rounded-full blur-[200px] -z-10 mix-blend-screen pointer-events-none" />
-      <div className="absolute top-[40%] left-[60%] w-[400px] h-[400px] bg-accent/10 rounded-full blur-[120px] -z-10 mix-blend-screen pointer-events-none" />
+      {/* Background Ambient Aura Effect (Gemini-style) */}
+      <div className="absolute top-[-20%] left-[-10%] w-[50vw] h-[50vw] max-w-[800px] max-h-[800px] bg-primary/30 rounded-full blur-[120px] -z-10 mix-blend-screen animate-aura-1 pointer-events-none" />
+      <div className="absolute bottom-[-20%] right-[-10%] w-[60vw] h-[60vw] max-w-[900px] max-h-[900px] bg-secondary/20 rounded-full blur-[150px] -z-10 mix-blend-screen animate-aura-2 pointer-events-none" />
+      <div className="absolute top-[30%] left-[40%] w-[40vw] h-[40vw] max-w-[600px] max-h-[600px] bg-accent/20 rounded-full blur-[100px] -z-10 mix-blend-screen animate-aura-3 pointer-events-none" />
 
       <Navbar />
 

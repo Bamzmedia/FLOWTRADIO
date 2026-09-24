@@ -21,7 +21,7 @@ export default function SubaccountModal({
   freeCollateral = 0,
   onSuccess,
 }: SubaccountModalProps) {
-  const { isConnected, balance } = useWallet();
+  const { isConnected, balance, walletUsdcBalance, nadoFreeCollateral, refetchBalance } = useWallet();
   const [mode, setMode] = useState<'deposit' | 'withdraw'>('deposit');
   const [amount, setAmount] = useState<string>('');
   const [subaccountName, setSubaccountName] = useState<string>('default');
@@ -62,12 +62,14 @@ export default function SubaccountModal({
       return;
     }
 
-    if (mode === 'deposit' && numAmount > balance) {
+    const maxDeposit = walletUsdcBalance > 0 ? walletUsdcBalance : balance;
+    if (mode === 'deposit' && maxDeposit > 0 && numAmount > maxDeposit) {
       setFeedback({ type: 'error', msg: 'Insufficient USDC balance in connected wallet.' });
       return;
     }
 
-    if (mode === 'withdraw' && numAmount > freeCollateral) {
+    const availableFree = nadoFreeCollateral > 0 ? nadoFreeCollateral : freeCollateral;
+    if (mode === 'withdraw' && availableFree > 0 && numAmount > availableFree) {
       setFeedback({ type: 'error', msg: 'Requested amount exceeds free subaccount collateral.' });
       return;
     }
@@ -106,12 +108,20 @@ export default function SubaccountModal({
         ];
         const endpoint = new ethers.Contract(endpointContract!, endpointAbi, signer);
         
-        // Convert 'default' to bytes12
-        const nameHex = Buffer.from(subaccountName, 'utf-8').toString('hex').padEnd(24, '0').slice(0, 24);
+        // Pure JS safe 12-byte subaccount hex
+        let nameHex = '';
+        for (let i = 0; i < 12; i++) {
+          if (i < subaccountName.length) {
+            nameHex += subaccountName.charCodeAt(i).toString(16).padStart(2, '0');
+          } else {
+            nameHex += '00';
+          }
+        }
         const subaccountBytes12 = '0x' + nameHex;
 
         const tx = await endpoint.depositCollateral(subaccountBytes12, 0, tokenAmount);
         await tx.wait();
+        refetchBalance();
         setFeedback({
           type: 'success',
           msg: `Deposit of $${numAmount.toFixed(2)} USDC confirmed on Ink!`,
@@ -123,7 +133,7 @@ export default function SubaccountModal({
         const amountX18 = ethers.parseUnits(numAmount.toFixed(18), 18).toString();
         
         await withdrawCollateral(0, amountX18, sender, signer);
-        
+        refetchBalance();
         setFeedback({
           type: 'success',
           msg: `Withdrawal of $${numAmount.toFixed(2)} USDC submitted to Nado!`,
@@ -203,12 +213,12 @@ export default function SubaccountModal({
         {/* Balances Display */}
         <div className="grid grid-cols-2 gap-3 mb-5 text-xs font-mono">
           <div className="bg-black/30 border border-white/5 p-3 rounded-xl">
-            <span className="text-gray-400 block mb-1 font-sans">Wallet Balance</span>
-            <span className="font-bold text-white text-sm">${balance.toFixed(2)} USDC</span>
+            <span className="text-gray-400 block mb-1 font-sans">Wallet USDC</span>
+            <span className="font-bold text-white text-sm">${walletUsdcBalance.toFixed(2)} USDC</span>
           </div>
           <div className="bg-black/30 border border-white/5 p-3 rounded-xl">
             <span className="text-gray-400 block mb-1 font-sans">Free Subaccount</span>
-            <span className="font-bold text-green-400 text-sm">${freeCollateral.toFixed(2)} USDC</span>
+            <span className="font-bold text-green-400 text-sm">${(nadoFreeCollateral > 0 ? nadoFreeCollateral : freeCollateral).toFixed(2)} USDC</span>
           </div>
         </div>
 
@@ -246,7 +256,7 @@ export default function SubaccountModal({
               <label className="font-medium text-gray-400">Amount (USDC)</label>
               <button
                 type="button"
-                onClick={() => setAmount(mode === 'deposit' ? balance.toString() : freeCollateral.toString())}
+                onClick={() => setAmount(mode === 'deposit' ? (walletUsdcBalance > 0 ? walletUsdcBalance.toString() : balance.toString()) : (nadoFreeCollateral > 0 ? nadoFreeCollateral.toString() : freeCollateral.toString()))}
                 className="text-primary font-bold hover:underline cursor-pointer"
               >
                 Max

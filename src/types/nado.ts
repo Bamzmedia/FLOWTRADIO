@@ -168,3 +168,35 @@ export interface PastFill {
   timestamp: number; // seconds
   side: 'buy' | 'sell';
 }
+
+export interface NadoSpotAsset {
+  productId: number;
+  symbol: string;
+  name: string;
+  amount: number;
+  price: number;
+  valueUsd: number;
+}
+
+export interface NadoPerpPosition {
+  productId: number;
+  symbol: string;
+  side: 'long' | 'short';
+  amount: number;
+  entryPrice: number;
+  markPrice: number;
+  valueUsd: number;
+  unrealizedPnl: number;
+}
+
+export interface NadoUserPortfolio {
+  subaccountHex: string;
+  subaccountName: string;
+  allSubaccounts: string[];
+  totalCollateral: number;
+  freeCollateral: number;
+  marginUsage: number;
+  spotAssets: NadoSpotAsset[];
+  perpPositions: NadoPerpPosition[];
+}
+
