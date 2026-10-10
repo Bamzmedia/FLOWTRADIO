@@ -945,7 +945,12 @@ function TradeContent() {
       // To close a LONG (pos.amount > 0), place a SELL with aggressive slip (e.g. price * 0.95)
       // To close a SHORT (pos.amount < 0), place a BUY with aggressive slip (e.g. price * 1.05)
       const closeAmount = -pos.amount;
-      const closePrice = closeAmount > 0 ? price * 1.05 : price * 0.95;
+      const posMarketPrice = livePrices[pos.productId]
+        || (pos.productId === activeProductId && price > 0 ? price : 0)
+        || MARKETS.find((m) => m.productId === pos.productId)?.initialPrice
+        || price
+        || 100;
+      const closePrice = closeAmount > 0 ? posMarketPrice * 1.05 : posMarketPrice * 0.95;
       const amountX18 = quantizeAmountX18(closeAmount, pos.productId);
       const priceX18 = quantizePriceX18(closePrice, pos.productId);
       const expiration = (Math.floor(Date.now() / 1000) + 300).toString();
@@ -1234,10 +1239,10 @@ function TradeContent() {
                               <td className="py-2 text-yellow-400 font-bold">${pos.marginUsage.toFixed(2)}</td>
                               <td className="py-2 text-right">
                                 <button
-                                  disabled={closingPositionId === pos.productId || isSubmitting || !isConnected || isAuthenticating || isBalanceLoading || isMarketLoading || !!marketError || !!balanceError}
+                                  disabled={closingPositionId === pos.productId || !isConnected}
                                   onClick={() => handleClosePosition(pos)}
                                   className={`px-2 py-0.5 bg-red-500/20 text-red-400 border border-red-500/30 rounded hover:bg-red-500 hover:text-white transition-all font-sans font-bold flex items-center gap-1 ${
-                                    (closingPositionId === pos.productId || isSubmitting || !isConnected || isAuthenticating || isBalanceLoading || isMarketLoading || !!marketError || !!balanceError) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                                    (closingPositionId === pos.productId || !isConnected) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
                                   }`}
                                 >
                                   {closingPositionId === pos.productId && <Loader2 size={10} className="animate-spin" />}
