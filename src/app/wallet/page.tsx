@@ -108,17 +108,37 @@ export default function WalletPage() {
       }
 
       if (activeTab === 'deposit') {
-        const usdcContract = process.env.NEXT_PUBLIC_NADO_USDC_CONTRACT || '0x0200C29006150606B650577BBE7B6248F58470c1';
+        const userAddr = await signer.getAddress();
+        const usdt0Address = '0x0200C29006150606B650577BBE7B6248F58470c1';
+        const usdcAddress = '0x2D270e6886d130D724215A266106e6832161EAEd';
+
         const erc20Abi = [
           'function approve(address spender, uint256 amount) public returns (bool)',
-          'function allowance(address owner, address spender) public view returns (uint256)'
+          'function allowance(address owner, address spender) public view returns (uint256)',
+          'function balanceOf(address account) public view returns (uint256)'
         ];
-        const token = new ethers.Contract(usdcContract, erc20Abi, signer);
+
+        const usdt0Token = new ethers.Contract(usdt0Address, erc20Abi, signer);
+        const usdcToken = new ethers.Contract(usdcAddress, erc20Abi, signer);
+
         const tokenAmount = ethers.parseUnits(numAmount.toFixed(6), 6);
 
-        const currentAllowance = await token.allowance(await signer.getAddress(), endpointContract);
+        // Check balances to see if user holds USDC or USD₮0
+        const [usdt0Bal, usdcBal] = await Promise.all([
+          usdt0Token.balanceOf(userAddr).catch(() => 0n),
+          usdcToken.balanceOf(userAddr).catch(() => 0n),
+        ]);
+
+        let depositToken = usdt0Token;
+        let depositProductId = 0; // USDT0 is product 0 on Nado
+        if (usdcBal >= tokenAmount || usdcBal > usdt0Bal) {
+          depositToken = usdcToken;
+          depositProductId = 5; // Native USDC is product 5 on Nado
+        }
+
+        const currentAllowance = await depositToken.allowance(userAddr, endpointContract);
         if (currentAllowance < tokenAmount) {
-          const txApprove = await token.approve(endpointContract, tokenAmount);
+          const txApprove = await depositToken.approve(endpointContract, tokenAmount);
           await txApprove.wait();
         }
 
@@ -137,7 +157,7 @@ export default function WalletPage() {
         }
         const subaccountBytes12 = '0x' + nameHex;
 
-        const tx = await endpoint.depositCollateral(subaccountBytes12, 0, tokenAmount);
+        const tx = await endpoint.depositCollateral(subaccountBytes12, depositProductId, tokenAmount);
         await tx.wait();
       } else if (activeTab === 'withdraw') {
         const { withdrawCollateral } = await import('@/nado/nadoApi');

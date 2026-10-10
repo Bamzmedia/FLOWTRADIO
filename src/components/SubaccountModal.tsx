@@ -86,22 +86,43 @@ export default function SubaccountModal({
       const signer = await provider.getSigner();
 
       if (mode === 'deposit') {
-        const usdcContract = process.env.NEXT_PUBLIC_NADO_USDC_CONTRACT || '0x0200C29006150606B650577BBE7B6248F58470c1';
+        const userAddr = await signer.getAddress();
+        const usdt0Address = '0x0200C29006150606B650577BBE7B6248F58470c1';
+        const usdcAddress = '0x2D270e6886d130D724215A266106e6832161EAEd';
+
         const erc20Abi = [
           'function approve(address spender, uint256 amount) public returns (bool)',
-          'function allowance(address owner, address spender) public view returns (uint256)'
+          'function allowance(address owner, address spender) public view returns (uint256)',
+          'function balanceOf(address account) public view returns (uint256)'
         ];
-        const token = new ethers.Contract(usdcContract, erc20Abi, signer);
-        const tokenAmount = ethers.parseUnits(numAmount.toFixed(6), 6); // USDC is 6 decimals
 
-        const currentAllowance = await token.allowance(await signer.getAddress(), endpointContract!);
+        const usdt0Token = new ethers.Contract(usdt0Address, erc20Abi, signer);
+        const usdcToken = new ethers.Contract(usdcAddress, erc20Abi, signer);
+
+        const tokenAmount = ethers.parseUnits(numAmount.toFixed(6), 6); // 6 decimals
+
+        const [usdt0Bal, usdcBal] = await Promise.all([
+          usdt0Token.balanceOf(userAddr).catch(() => 0n),
+          usdcToken.balanceOf(userAddr).catch(() => 0n),
+        ]);
+
+        let depositToken = usdt0Token;
+        let depositProductId = 0;
+        let tokenName = 'USD₮0';
+        if (usdcBal >= tokenAmount || usdcBal > usdt0Bal) {
+          depositToken = usdcToken;
+          depositProductId = 5;
+          tokenName = 'USDC';
+        }
+
+        const currentAllowance = await depositToken.allowance(userAddr, endpointContract!);
         if (currentAllowance < tokenAmount) {
-          setFeedback({ type: 'info', msg: 'Approving USDC for Nado Endpoint...' });
-          const txApprove = await token.approve(endpointContract!, tokenAmount);
+          setFeedback({ type: 'info', msg: `Approving ${tokenName} for Nado Endpoint...` });
+          const txApprove = await depositToken.approve(endpointContract!, tokenAmount);
           await txApprove.wait();
         }
 
-        setFeedback({ type: 'info', msg: 'Depositing USDC on Ink Mainnet...' });
+        setFeedback({ type: 'info', msg: `Depositing ${tokenName} on Ink Mainnet...` });
         
         const endpointAbi = [
           'function depositCollateral(bytes12 subaccountName, uint32 productId, uint128 amount) external',
@@ -119,12 +140,12 @@ export default function SubaccountModal({
         }
         const subaccountBytes12 = '0x' + nameHex;
 
-        const tx = await endpoint.depositCollateral(subaccountBytes12, 0, tokenAmount);
+        const tx = await endpoint.depositCollateral(subaccountBytes12, depositProductId, tokenAmount);
         await tx.wait();
         refetchBalance();
         setFeedback({
           type: 'success',
-          msg: `Deposit of $${numAmount.toFixed(2)} USDC confirmed on Ink!`,
+          msg: `Deposit of $${numAmount.toFixed(2)} ${tokenName} confirmed on Ink!`,
         });
       } else {
         // Off-chain withdrawal via sequencer

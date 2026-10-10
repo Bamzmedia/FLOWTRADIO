@@ -4,11 +4,11 @@ import { NadoEnv, NadoOrder, PlaceOrderPayload, SubaccountState, SubaccountPosit
 export function getNadoEnv(): NadoEnv {
   if (typeof process !== 'undefined' && process.env) {
     const env = process.env.NEXT_PUBLIC_NADO_ENV;
-    if (env === 'mainnet' || env === 'prod') {
-      return 'mainnet';
+    if (env === 'testnet') {
+      return 'testnet';
     }
   }
-  return 'testnet';
+  return 'mainnet';
 }
 
 /**
