@@ -262,6 +262,65 @@ export async function fetchSubaccountState(
   };
 }
 
+export enum NadoOrderExecutionType {
+  DEFAULT = 0,
+  IOC = 1,
+  FOK = 2,
+  POST_ONLY = 3,
+}
+
+export interface BuildAppendixOptions {
+  orderType?: NadoOrderExecutionType;
+  isolated?: boolean;
+  reduceOnly?: boolean;
+  builderId?: number;
+  builderFeeRate?: number;
+}
+
+/**
+ * Builds canonical 128-bit Nado order appendix bitfield:
+ * | value (64b) | builderId (16b) | builderFeeRate (10b) | reserved (24b) | trigger (2b) | reduceOnly (1b) | orderType (2b) | isolated (1b) | version (8b) |
+ * Version 1 is strictly required by the Nado sequencer.
+ */
+export function buildOrderAppendix(opts: BuildAppendixOptions = {}): string {
+  const version = BigInt(1); // Nado Appendix version 1 (bits 7..0)
+  let appendix = version & BigInt(0xff);
+
+  if (opts.isolated) {
+    appendix |= BigInt(1) << BigInt(8);
+  }
+
+  const orderType = BigInt(opts.orderType ?? NadoOrderExecutionType.DEFAULT);
+  appendix |= (orderType & BigInt(0x03)) << BigInt(9);
+
+  if (opts.reduceOnly) {
+    appendix |= BigInt(1) << BigInt(11);
+  }
+
+  if (opts.builderFeeRate !== undefined && opts.builderId !== undefined) {
+    const feeRate = BigInt(opts.builderFeeRate) & BigInt(0x3ff);
+    const builderId = BigInt(opts.builderId) & BigInt(0xffff);
+    appendix |= feeRate << BigInt(38);
+    appendix |= builderId << BigInt(48);
+  }
+
+  return appendix.toString();
+}
+
+/**
+ * Canonical EIP-712 Order Type definition for Nado Protocol
+ */
+export const NADO_EIP712_ORDER_TYPES = {
+  Order: [
+    { name: 'sender', type: 'bytes32' },
+    { name: 'priceX18', type: 'int128' },
+    { name: 'amount', type: 'int128' },
+    { name: 'expiration', type: 'uint64' },
+    { name: 'nonce', type: 'uint64' },
+    { name: 'appendix', type: 'uint128' },
+  ],
+};
+
 /**
  * Dispatches a signed EIP-712 limit order payload to the off-chain matching engine.
  */
@@ -275,7 +334,7 @@ export async function placeOrder(
 
   const safeOrder: NadoOrder = {
     ...order,
-    appendix: order.appendix !== undefined ? String(order.appendix) : '0',
+    appendix: order.appendix !== undefined ? String(order.appendix) : buildOrderAppendix(),
   };
 
   const payload: PlaceOrderPayload = {

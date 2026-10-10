@@ -12,7 +12,7 @@ import { useNadoWebSocket } from '@/hooks/useNadoWebSocket';
 import { useNadoMarketData } from '@/hooks/useNadoMarketData';
 import { ethers } from 'ethers';
 import { useAppKitAccount, useAppKitProvider } from '@reown/appkit/react';
-import { placeOrder, fetchNadoAllProducts, getOrderNonce, cancelNadoOrder, fetchHistoricalOHLCV } from '@/nado/nadoApi';
+import { placeOrder, fetchNadoAllProducts, getOrderNonce, cancelNadoOrder, fetchHistoricalOHLCV, buildOrderAppendix, NadoOrderExecutionType, NADO_EIP712_ORDER_TYPES } from '@/nado/nadoApi';
 import { formatSubaccountSender, useNadoUserStream } from '@/hooks/useNadoUserStream';
 import SubaccountModal from '@/components/SubaccountModal';
 import { NadoOrder } from '@/types/nado';
@@ -674,34 +674,33 @@ function TradeContent() {
             verifyingContract?: string;
           } = {
             name: 'Nado',
-            version: '0.1.0',
+            version: '0.0.1',
             chainId: chainId,
           };
 
-          const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT;
+          const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT || '0x05ec92D78ED421f3D3Ada77FFdE167106565974E';
           if (endpointContract && endpointContract !== ethers.ZeroAddress && ethers.isAddress(endpointContract)) {
             domain.verifyingContract = endpointContract;
           }
 
-          const types = {
-            Order: [
-              { name: 'sender', type: 'bytes32' },
-              { name: 'priceX18', type: 'int128' },
-              { name: 'amount', type: 'int128' },
-              { name: 'expiration', type: 'uint64' },
-              { name: 'nonce', type: 'uint64' }
-            ]
-          };
+          // Build canonical Nado appendix with version 1
+          const orderAppendix = buildOrderAppendix({
+            orderType: orderType === 'market' ? NadoOrderExecutionType.IOC : NadoOrderExecutionType.DEFAULT,
+            reduceOnly: false,
+          });
+
+          const types = NADO_EIP712_ORDER_TYPES;
 
           const value = {
             sender,
             priceX18: BigInt(priceX18),
             amount: BigInt(amountX18),
             expiration: BigInt(expiration),
-            nonce: BigInt(nonce)
+            nonce: BigInt(nonce),
+            appendix: BigInt(orderAppendix),
           };
 
-          console.log('[EIP-712] Requesting real order signature from connected Web3 wallet...');
+          console.log('[EIP-712] Requesting real order signature from connected Web3 wallet...', { domain, types, value });
           realSignature = await signer.signTypedData(domain, types, value);
           console.log('[EIP-712] Cryptographic Order Signature created successfully:', realSignature);
           updateTransaction(txId, { status: 'submitted' });
@@ -714,13 +713,19 @@ function TradeContent() {
         console.warn('No Web3 wallet provider available. Skipping true signature step in dev mode.');
       }
 
+      // Compute canonical order appendix for REST/WS execution
+      const orderAppendix = buildOrderAppendix({
+        orderType: orderType === 'market' ? NadoOrderExecutionType.IOC : NadoOrderExecutionType.DEFAULT,
+        reduceOnly: false,
+      });
+
       const orderPayload: NadoOrder = {
         sender,
         priceX18,
         amount: amountX18,
         expiration,
         nonce,
-        appendix: '0',
+        appendix: orderAppendix,
       };
 
       let orderIdRes = `ord_${Math.floor(Math.random() * 1000000)}`;
@@ -925,24 +930,14 @@ function TradeContent() {
         verifyingContract?: string;
       } = {
         name: 'Nado',
-        version: '0.1.0',
+        version: '0.0.1',
         chainId: chainId,
       };
 
-      const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT;
+      const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT || '0x05ec92D78ED421f3D3Ada77FFdE167106565974E';
       if (endpointContract && endpointContract !== ethers.ZeroAddress && ethers.isAddress(endpointContract)) {
         domain.verifyingContract = endpointContract;
       }
-
-      const types = {
-        Order: [
-          { name: 'sender', type: 'bytes32' },
-          { name: 'priceX18', type: 'int128' },
-          { name: 'amount', type: 'int128' },
-          { name: 'expiration', type: 'uint64' },
-          { name: 'nonce', type: 'uint64' },
-        ],
-      };
 
       // To close a LONG (pos.amount > 0), place a SELL with aggressive slip (e.g. price * 0.95)
       // To close a SHORT (pos.amount < 0), place a BUY with aggressive slip (e.g. price * 1.05)
@@ -953,16 +948,24 @@ function TradeContent() {
       const expiration = (Math.floor(Date.now() / 1000) + 300).toString();
       const nonce = getOrderNonce();
 
+      const orderAppendix = buildOrderAppendix({
+        orderType: NadoOrderExecutionType.IOC,
+        reduceOnly: true,
+      });
+
+      const types = NADO_EIP712_ORDER_TYPES;
+
       const value = {
         sender,
         priceX18: BigInt(priceX18),
         amount: BigInt(amountX18),
         expiration: BigInt(expiration),
         nonce: BigInt(nonce),
+        appendix: BigInt(orderAppendix),
       };
 
       const signature = await signer.signTypedData(domain, types, value);
-      const orderPayload: NadoOrder = { sender, priceX18, amount: amountX18, expiration, nonce, appendix: '0' };
+      const orderPayload: NadoOrder = { sender, priceX18, amount: amountX18, expiration, nonce, appendix: orderAppendix };
 
       await placeOrder(pos.productId, orderPayload, signature);
 
