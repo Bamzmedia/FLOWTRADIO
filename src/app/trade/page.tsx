@@ -594,14 +594,20 @@ function TradeContent() {
       return;
     }
 
-    if ((orderType === 'limit' || orderType === 'stop') && (!limitPrice || parseFloat(limitPrice) <= 0)) {
-      pushToast({
-        id: Date.now().toString(),
-        type: 'error',
-        title: 'Invalid Limit Price',
-        message: 'Please enter a valid positive price for your limit order.',
-      });
-      return;
+    let effectiveLimitPrice = limitPrice;
+    if ((orderType === 'limit' || orderType === 'stop') && (!effectiveLimitPrice || parseFloat(effectiveLimitPrice) <= 0)) {
+      if (price > 0) {
+        effectiveLimitPrice = price.toString();
+        setLimitPrice(effectiveLimitPrice);
+      } else {
+        pushToast({
+          id: Date.now().toString(),
+          type: 'error',
+          title: 'Invalid Limit Price',
+          message: 'Please enter a valid positive price for your limit order.',
+        });
+        return;
+      }
     }
 
     isSubmittingRef.current = true;
@@ -630,9 +636,9 @@ function TradeContent() {
       // Order execution price with slippage protection for market orders
       let orderExecPrice = price;
       if (orderType === 'limit') {
-        orderExecPrice = parseFloat(limitPrice) || price;
+        orderExecPrice = parseFloat(effectiveLimitPrice) || price;
       } else if (orderType === 'stop') {
-        orderExecPrice = parseFloat(limitPrice) || parseFloat(stopTriggerPrice) || price;
+        orderExecPrice = parseFloat(effectiveLimitPrice) || parseFloat(stopTriggerPrice) || price;
       } else {
         const slippageMult = 1 + (parseFloat(slippagePct) || 1) / 100;
         if (activeDirection === 'long') {
@@ -1501,9 +1507,9 @@ function TradeContent() {
 
             {/* Order Types Tabs */}
             <div className="flex gap-4 text-sm mb-6 border-b border-white/10 pb-2">
-              <button onClick={() => setOrderType('market')} className={`font-semibold ${orderType === 'market' ? 'text-primary' : 'text-gray-500 hover:text-gray-300'}`}>Market</button>
-              <button onClick={() => setOrderType('limit')} className={`font-semibold ${orderType === 'limit' ? 'text-primary' : 'text-gray-500 hover:text-gray-300'}`}>Limit</button>
-              <button onClick={() => setOrderType('stop')} className={`font-semibold ${orderType === 'stop' ? 'text-primary' : 'text-gray-500 hover:text-gray-300'}`}>Stop</button>
+              <button onClick={() => setOrderType('market')} className={`font-semibold transition-colors ${orderType === 'market' ? 'text-primary border-b border-primary' : 'text-gray-500 hover:text-gray-300'}`}>Market</button>
+              <button onClick={() => { setOrderType('limit'); if (!limitPrice || parseFloat(limitPrice) <= 0) setLimitPrice(price.toString()); }} className={`font-semibold transition-colors ${orderType === 'limit' ? 'text-primary border-b border-primary' : 'text-gray-500 hover:text-gray-300'}`}>Limit</button>
+              <button onClick={() => { setOrderType('stop'); if (!stopTriggerPrice) setStopTriggerPrice(price.toString()); if (!limitPrice) setLimitPrice(price.toString()); }} className={`font-semibold transition-colors ${orderType === 'stop' ? 'text-primary border-b border-primary' : 'text-gray-500 hover:text-gray-300'}`}>Stop</button>
             </div>
 
             <div className="space-y-4">
