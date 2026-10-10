@@ -12,7 +12,7 @@ import { useNadoWebSocket } from '@/hooks/useNadoWebSocket';
 import { useNadoMarketData } from '@/hooks/useNadoMarketData';
 import { ethers } from 'ethers';
 import { useAppKitAccount, useAppKitProvider } from '@reown/appkit/react';
-import { placeOrder, fetchNadoAllProducts, getOrderNonce, cancelNadoOrder, fetchHistoricalOHLCV, buildOrderAppendix, NadoOrderExecutionType, NADO_EIP712_ORDER_TYPES } from '@/nado/nadoApi';
+import { placeOrder, fetchNadoAllProducts, getOrderNonce, cancelNadoOrder, fetchHistoricalOHLCV, buildOrderAppendix, NadoOrderExecutionType, NADO_EIP712_ORDER_TYPES, getOrderVerifyingContract } from '@/nado/nadoApi';
 import { formatSubaccountSender, useNadoUserStream } from '@/hooks/useNadoUserStream';
 import SubaccountModal from '@/components/SubaccountModal';
 import { NadoOrder } from '@/types/nado';
@@ -655,7 +655,7 @@ function TradeContent() {
       const amountX18 = toX18String(rawAmount);
       const priceX18 = toX18String(orderExecPrice);
 
-      const sender = formatSubaccountSender(activeUserAddress, 'default');
+      let sender = formatSubaccountSender(activeUserAddress, 'default');
 
       // Request authentic EIP-712 Order Signature from connected wallet
       let realSignature = '';
@@ -664,24 +664,20 @@ function TradeContent() {
         try {
           const provider = new ethers.BrowserProvider(providerSource as any);
           const signer = await provider.getSigner();
+          const signerAddress = await signer.getAddress();
+          if (signerAddress) {
+            sender = formatSubaccountSender(signerAddress, 'default');
+          }
           const activeNetwork = await provider.getNetwork();
           const chainId = Number(activeNetwork.chainId) || 57073;
 
-          const domain: {
-            name: string;
-            version: string;
-            chainId: number;
-            verifyingContract?: string;
-          } = {
+          // In Nado Protocol, order verifying contract is address(product_id)
+          const domain = {
             name: 'Nado',
             version: '0.0.1',
             chainId: chainId,
+            verifyingContract: getOrderVerifyingContract(productId),
           };
-
-          const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT || '0x05ec92D78ED421f3D3Ada77FFdE167106565974E';
-          if (endpointContract && endpointContract !== ethers.ZeroAddress && ethers.isAddress(endpointContract)) {
-            domain.verifyingContract = endpointContract;
-          }
 
           // Build canonical Nado appendix with version 1
           const orderAppendix = buildOrderAppendix({
@@ -914,30 +910,26 @@ function TradeContent() {
     ]);
 
     try {
-      const sender = formatSubaccountSender(activeUserAddress, 'default');
+      let sender = formatSubaccountSender(activeUserAddress, 'default');
       const providerSource = walletProvider || (typeof window !== 'undefined' ? (window as any).ethereum : null);
       if (!providerSource) throw new Error('No wallet provider available.');
 
       const provider = new ethers.BrowserProvider(providerSource as any);
       const signer = await provider.getSigner();
+      const signerAddress = await signer.getAddress();
+      if (signerAddress) {
+        sender = formatSubaccountSender(signerAddress, 'default');
+      }
       const activeNetwork = await provider.getNetwork();
       const chainId = Number(activeNetwork.chainId) || 57073;
 
-      const domain: {
-        name: string;
-        version: string;
-        chainId: number;
-        verifyingContract?: string;
-      } = {
+      // In Nado Protocol, order verifying contract is address(product_id)
+      const domain = {
         name: 'Nado',
         version: '0.0.1',
         chainId: chainId,
+        verifyingContract: getOrderVerifyingContract(pos.productId),
       };
-
-      const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT || '0x05ec92D78ED421f3D3Ada77FFdE167106565974E';
-      if (endpointContract && endpointContract !== ethers.ZeroAddress && ethers.isAddress(endpointContract)) {
-        domain.verifyingContract = endpointContract;
-      }
 
       // To close a LONG (pos.amount > 0), place a SELL with aggressive slip (e.g. price * 0.95)
       // To close a SHORT (pos.amount < 0), place a BUY with aggressive slip (e.g. price * 1.05)

@@ -322,6 +322,16 @@ export const NADO_EIP712_ORDER_TYPES = {
 };
 
 /**
+ * In Nado / Vertex Protocol, order verifying contracts are derived directly from the product ID:
+ * address(product_id) -> 20-byte big-endian representation, zero-padded on the left.
+ * e.g. product_id = 8 -> 0x0000000000000000000000000000000000000008
+ */
+export function getOrderVerifyingContract(productId: number): string {
+  const hex = productId.toString(16).padStart(40, '0');
+  return '0x' + hex;
+}
+
+/**
  * Dispatches a signed EIP-712 limit order payload to the off-chain matching engine.
  */
 export async function placeOrder(
