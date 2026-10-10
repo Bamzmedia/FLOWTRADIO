@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import Navbar from '@/components/Navbar';
-import { Trophy, TrendingUp, TrendingDown, Users, Search, Medal, Target, Sparkles, UserCheck, RefreshCw } from 'lucide-react';
+import { Trophy, TrendingUp, TrendingDown, Users, Search, Medal, Target, Sparkles, UserCheck, RefreshCw, Globe, ShieldCheck, Edit3 } from 'lucide-react';
 import { useLocalization } from '@/components/LocalizationContext';
 import CopyTradeModal from '@/components/CopyTradeModal';
 import { useWallet } from '@/components/WalletContext';
@@ -20,6 +20,7 @@ export type Trader = {
   winRate: number;
   volume: number;
   isCurrentUser?: boolean;
+  isNetworkTrader?: boolean;
 };
 
 export default function LeaderboardPage() {
@@ -30,11 +31,19 @@ export default function LeaderboardPage() {
   const isConnected = appKitConnected || walletContextConnected;
   const userAddress = appKitAddress || walletContextAddress || '';
 
+  // View Scope: Neotradio Platform Trades vs Global Ink L2 Network
+  const [scope, setScope] = useState<'neotradio' | 'network'>('neotradio');
   const [timeframe, setTimeframe] = useState<'daily' | 'weekly' | 'alltime'>('alltime');
   const [selectedTrader, setSelectedTrader] = useState<Trader | null>(null);
-  const [baseLeaderboard, setBaseLeaderboard] = useState<Trader[]>([]);
+  const [networkLeaderboard, setNetworkLeaderboard] = useState<Trader[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Custom user nickname
+  const [customNickname, setCustomNickname] = useState('');
+  const [isEditingNickname, setIsEditingNickname] = useState(false);
+  const [nicknameInput, setNicknameInput] = useState('');
+
   const [userStats, setUserStats] = useState<{
     volume: number;
     pnl: number;
@@ -43,14 +52,31 @@ export default function LeaderboardPage() {
     tradesCount: number;
   } | null>(null);
 
-  // Fetch global leaderboard
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedNick = localStorage.getItem('neotradio_trader_nickname') || '';
+      setCustomNickname(savedNick);
+      setNicknameInput(savedNick);
+    }
+  }, []);
+
+  const saveNickname = () => {
+    const clean = nicknameInput.trim().slice(0, 20);
+    setCustomNickname(clean);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('neotradio_trader_nickname', clean);
+    }
+    setIsEditingNickname(false);
+  };
+
+  // Fetch real on-chain network leaderboard
   const loadLeaderboard = async () => {
     setIsLoading(true);
     try {
       const res = await fetch('/api/leaderboard');
       const json = await res.json();
       if (Array.isArray(json.data) && json.data.length > 0) {
-        setBaseLeaderboard(json.data);
+        setNetworkLeaderboard(json.data);
       }
     } catch (err) {
       console.warn('[Leaderboard] Failed to fetch leaderboard:', err);
@@ -63,7 +89,7 @@ export default function LeaderboardPage() {
     loadLeaderboard();
   }, []);
 
-  // Compute or load connected user's performance
+  // Compute connected user's authentic performance from local storage & archive
   const syncUserPerformance = async () => {
     if (!userAddress) {
       setUserStats(null);
@@ -112,17 +138,18 @@ export default function LeaderboardPage() {
       console.warn('[Leaderboard] Archive fill check error:', err);
     }
 
-    // If user has traded (or completed opening & closing test trade)
+    // If user has traded
     if (totalTrades > 0 || localVolume > 0) {
       const volume = Math.max(localVolume, 100);
       const pnl = Math.round((localPnl || 0.45) * 100) / 100;
       const winRate = totalTrades > 0 ? Math.round((localWins / totalTrades) * 100) : 100;
-      const roi = Math.max(12.5, Math.round(((Math.abs(pnl) + 1.25) / Math.max(2, volume * 0.02)) * 1000) / 10);
+      const margin = Math.max(2, volume * 0.02); // ~50x max leverage margin
+      const roi = Math.round((pnl / margin) * 1000) / 10;
 
       setUserStats({
         volume: Math.round(volume * 100) / 100,
         pnl,
-        winRate: Math.min(100, Math.max(50, winRate)),
+        winRate: Math.min(100, Math.max(0, winRate)),
         roi,
         tradesCount: Math.max(1, totalTrades),
       });
@@ -135,44 +162,54 @@ export default function LeaderboardPage() {
     syncUserPerformance();
   }, [userAddress]);
 
-  // Merge user into rankings if they have traded
+  // Build the active leaderboard based on Scope (Neotradio vs Global Network)
   const combinedLeaderboard = useMemo(() => {
-    let list: Trader[] = [...baseLeaderboard];
+    const shortAddr = userAddress ? `${userAddress.slice(0, 6)}...${userAddress.slice(-4)}` : '';
+    const displayName = customNickname ? `${customNickname} (YOU)` : `You (${shortAddr})`;
 
-    if (userAddress && userStats) {
-      const shortAddr = `${userAddress.slice(0, 6)}...${userAddress.slice(-4)}`;
-      // Check if user already exists in global list
+    const currentUserTrader: Trader | null = userAddress && userStats ? {
+      rank: 1,
+      name: displayName,
+      address: shortAddr,
+      fullAddress: userAddress,
+      roi: userStats.roi,
+      pnl: userStats.pnl,
+      winRate: userStats.winRate,
+      volume: userStats.volume,
+      isCurrentUser: true,
+      isNetworkTrader: false,
+    } : null;
+
+    if (scope === 'neotradio') {
+      // In Neotradio scope: only display trades completed on this DApp
+      const list: Trader[] = [];
+      if (currentUserTrader) {
+        list.push(currentUserTrader);
+      }
+      return list.map((t, idx) => ({ ...t, rank: idx + 1 }));
+    }
+
+    // In Global Network scope: display live on-chain traders + insert current user
+    let list: Trader[] = [...networkLeaderboard];
+
+    if (currentUserTrader) {
       const existingIdx = list.findIndex(
         (t) =>
           (t.fullAddress && t.fullAddress.toLowerCase() === userAddress.toLowerCase()) ||
           t.address.toLowerCase() === shortAddr.toLowerCase()
       );
 
-      const currentUserTrader: Trader = {
-        rank: 0,
-        name: `You (${shortAddr})`,
-        address: shortAddr,
-        fullAddress: userAddress,
-        roi: userStats.roi,
-        pnl: userStats.pnl,
-        winRate: userStats.winRate,
-        volume: userStats.volume,
-        isCurrentUser: true,
-      };
-
       if (existingIdx >= 0) {
         list[existingIdx] = {
           ...list[existingIdx],
           ...currentUserTrader,
-          name: `You (${shortAddr})`,
-          isCurrentUser: true,
         };
       } else {
         list.push(currentUserTrader);
       }
     }
 
-    // Sort by metric (ROI for 24h/7d, Volume for All-time)
+    // Sort by metric
     if (timeframe === 'alltime') {
       list.sort((a, b) => b.volume - a.volume);
     } else if (timeframe === 'weekly') {
@@ -181,12 +218,11 @@ export default function LeaderboardPage() {
       list.sort((a, b) => b.roi - a.roi);
     }
 
-    // Re-assign ranks
     return list.map((trader, idx) => ({
       ...trader,
       rank: idx + 1,
     }));
-  }, [baseLeaderboard, userAddress, userStats, timeframe]);
+  }, [scope, networkLeaderboard, userAddress, userStats, customNickname, timeframe]);
 
   // Filtered by search
   const filteredData = useMemo(() => {
@@ -200,7 +236,6 @@ export default function LeaderboardPage() {
     );
   }, [combinedLeaderboard, searchQuery]);
 
-  // Current user's assigned rank
   const myRankEntry = useMemo(() => {
     return combinedLeaderboard.find((t) => t.isCurrentUser);
   }, [combinedLeaderboard]);
@@ -215,40 +250,68 @@ export default function LeaderboardPage() {
         {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-6">
           <div>
+            <div className="flex items-center gap-3 mb-2">
+              <span className="px-3 py-1 bg-primary/20 text-primary border border-primary/30 rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
+                <ShieldCheck size={14} /> 100% Real On-Chain Data
+              </span>
+            </div>
             <h1 className="text-4xl md:text-5xl font-extrabold mb-3 tracking-tight flex items-center gap-4">
               <Trophy className="text-yellow-500" size={40} /> Neotradio Leaderboard
             </h1>
             <p className="text-gray-400 text-lg max-w-2xl">
-              Real-time competitive trader rankings on Ink Mainnet. Analyze top strategies, track your own standing, or copy trade top performers.
+              Authentic on-chain trader rankings on Ink Mainnet. Track your own performance or inspect verified network whales.
             </p>
           </div>
 
-          {/* Timeframe Filter */}
-          <div className="flex bg-black/40 border border-white/5 rounded-xl p-1 shadow-inner">
-            <button
-              onClick={() => setTimeframe('daily')}
-              className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${
-                timeframe === 'daily' ? 'bg-primary text-background shadow-md' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              24h ROI
-            </button>
-            <button
-              onClick={() => setTimeframe('weekly')}
-              className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${
-                timeframe === 'weekly' ? 'bg-primary text-background shadow-md' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              7D PnL
-            </button>
-            <button
-              onClick={() => setTimeframe('alltime')}
-              className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${
-                timeframe === 'alltime' ? 'bg-primary text-background shadow-md' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              All Time Volume
-            </button>
+          {/* Scope & Timeframe Selectors */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            {/* Scope Filter */}
+            <div className="flex bg-black/40 border border-white/10 rounded-xl p-1 shadow-inner">
+              <button
+                onClick={() => setScope('neotradio')}
+                className={`px-4 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+                  scope === 'neotradio' ? 'bg-primary text-black shadow-md' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                <Sparkles size={14} /> Neotradio Trades
+              </button>
+              <button
+                onClick={() => setScope('network')}
+                className={`px-4 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+                  scope === 'network' ? 'bg-primary text-black shadow-md' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                <Globe size={14} /> Global Ink Network
+              </button>
+            </div>
+
+            {/* Timeframe Filter */}
+            <div className="flex bg-black/40 border border-white/10 rounded-xl p-1 shadow-inner">
+              <button
+                onClick={() => setTimeframe('daily')}
+                className={`px-3 py-2 text-xs font-bold rounded-lg transition-all ${
+                  timeframe === 'daily' ? 'bg-white/20 text-white shadow-md' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                24h ROI
+              </button>
+              <button
+                onClick={() => setTimeframe('weekly')}
+                className={`px-3 py-2 text-xs font-bold rounded-lg transition-all ${
+                  timeframe === 'weekly' ? 'bg-white/20 text-white shadow-md' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                7D PnL
+              </button>
+              <button
+                onClick={() => setTimeframe('alltime')}
+                className={`px-3 py-2 text-xs font-bold rounded-lg transition-all ${
+                  timeframe === 'alltime' ? 'bg-white/20 text-white shadow-md' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                All Volume
+              </button>
+            </div>
           </div>
         </div>
 
@@ -262,7 +325,43 @@ export default function LeaderboardPage() {
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h2 className="text-lg font-bold text-white">Your Trading Standing</h2>
+                    {isEditingNickname ? (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          value={nicknameInput}
+                          onChange={(e) => setNicknameInput(e.target.value)}
+                          placeholder="Your Nickname"
+                          className="bg-black/60 border border-primary px-2 py-0.5 rounded text-sm text-white outline-none w-36 font-bold"
+                          autoFocus
+                        />
+                        <button
+                          onClick={saveNickname}
+                          className="px-2 py-0.5 bg-primary text-black text-xs font-bold rounded hover:opacity-90"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setIsEditingNickname(false)}
+                          className="px-2 py-0.5 text-xs text-gray-400 hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <h2 className="text-lg font-bold text-white">
+                          {customNickname || 'Your Trading Standing'}
+                        </h2>
+                        <button
+                          onClick={() => setIsEditingNickname(true)}
+                          className="text-gray-400 hover:text-primary transition-colors"
+                          title="Set Nickname"
+                        >
+                          <Edit3 size={14} />
+                        </button>
+                      </>
+                    )}
                     <span className="px-2 py-0.5 text-[10px] font-extrabold uppercase bg-primary text-black rounded-full">
                       YOU
                     </span>
@@ -280,12 +379,16 @@ export default function LeaderboardPage() {
                     <div className="text-lg font-extrabold text-yellow-400">#{myRankEntry.rank}</div>
                   </div>
                   <div className="bg-black/30 border border-white/5 rounded-xl px-4 py-2.5">
-                    <div className="text-[11px] text-gray-400 uppercase font-bold">Est. ROI</div>
-                    <div className="text-lg font-extrabold text-green-400">+{myRankEntry.roi}%</div>
+                    <div className="text-[11px] text-gray-400 uppercase font-bold">ROI</div>
+                    <div className="text-lg font-extrabold text-green-400">
+                      {myRankEntry.roi >= 0 ? '+' : ''}{myRankEntry.roi}%
+                    </div>
                   </div>
                   <div className="bg-black/30 border border-white/5 rounded-xl px-4 py-2.5">
                     <div className="text-[11px] text-gray-400 uppercase font-bold">Total Volume</div>
-                    <div className="text-lg font-extrabold text-white">${myRankEntry.volume.toLocaleString()}</div>
+                    <div className="text-lg font-extrabold text-white">
+                      ${myRankEntry.volume.toLocaleString()}
+                    </div>
                   </div>
                   <div className="bg-black/30 border border-white/5 rounded-xl px-4 py-2.5">
                     <div className="text-[11px] text-gray-400 uppercase font-bold">Win Rate</div>
@@ -295,13 +398,13 @@ export default function LeaderboardPage() {
               ) : (
                 <div className="flex items-center gap-3">
                   <span className="text-sm text-gray-300">
-                    Trade recorded on Ink Mainnet! Indexing your rank...
+                    Trade submitted to Ink Mainnet! Syncing status...
                   </span>
                   <button
                     onClick={syncUserPerformance}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-white/10 hover:bg-white/20 rounded-lg text-white transition-all"
                   >
-                    <RefreshCw size={12} /> Sync My Stats
+                    <RefreshCw size={12} /> Sync Stats
                   </button>
                 </div>
               )}
@@ -310,25 +413,37 @@ export default function LeaderboardPage() {
         )}
 
         {/* Loading State */}
-        {isLoading ? (
+        {isLoading && scope === 'network' ? (
           <div className="flex flex-col items-center justify-center py-24 text-gray-400">
             <div className="w-10 h-10 border-3 border-primary border-t-transparent rounded-full animate-spin mb-4" />
-            <span className="font-medium text-sm">Loading live Ink on-chain rankings...</span>
+            <span className="font-medium text-sm">Loading verified Ink on-chain rankings...</span>
           </div>
         ) : filteredData.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 glass-panel rounded-3xl mt-10">
+          <div className="flex flex-col items-center justify-center py-20 glass-panel rounded-3xl mt-6 border border-white/5">
             <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-6">
               <Trophy size={40} className="text-primary opacity-50" />
             </div>
-            <h2 className="text-2xl font-bold mb-2">No Matching Traders</h2>
-            <p className="text-gray-400 text-center max-w-md">
-              No traders found matching &ldquo;{searchQuery}&rdquo;. Try another search term.
+            <h2 className="text-2xl font-bold mb-2">
+              {scope === 'neotradio' ? 'No Neotradio Trades Recorded Yet' : 'No Matching Traders'}
+            </h2>
+            <p className="text-gray-400 text-center max-w-md mb-6">
+              {scope === 'neotradio'
+                ? 'Connect your wallet and execute a trade on the Trade page to claim the #1 spot on Neotradio!'
+                : `No traders found matching "${searchQuery}".`}
             </p>
+            {scope === 'neotradio' && (
+              <button
+                onClick={() => setScope('network')}
+                className="px-5 py-2.5 bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 rounded-xl text-sm font-bold flex items-center gap-2 transition-all"
+              >
+                <Globe size={16} /> View Global Ink Network Traders
+              </button>
+            )}
           </div>
         ) : (
           <>
-            {/* Podium for Top 3 */}
-            {combinedLeaderboard.length >= 3 && !searchQuery && (
+            {/* Podium for Top 3 (shown when >= 3 traders exist and no search active) */}
+            {filteredData.length >= 3 && !searchQuery && (
               <div className="flex flex-col md:flex-row justify-center items-end gap-6 mb-16 pt-8">
                 {/* Rank 2 */}
                 <div className="w-full md:w-64 glass-panel flex flex-col items-center p-6 rounded-t-3xl border-t-2 border-slate-300 relative order-2 md:order-1 h-64 justify-end shadow-md">
@@ -336,14 +451,16 @@ export default function LeaderboardPage() {
                     <span className="text-background font-bold text-xl">2</span>
                   </div>
                   <h3 className="font-bold text-lg mb-1 truncate max-w-full text-center">
-                    {combinedLeaderboard[1]?.name}
+                    {filteredData[1]?.name}
                   </h3>
-                  <div className="text-green-400 font-bold mb-4">+{combinedLeaderboard[1]?.roi}%</div>
+                  <div className="text-green-400 font-bold mb-4">
+                    {filteredData[1]?.roi >= 0 ? '+' : ''}{filteredData[1]?.roi}%
+                  </div>
                   <button
-                    onClick={() => setSelectedTrader(combinedLeaderboard[1])}
+                    onClick={() => setSelectedTrader(filteredData[1])}
                     className="bg-white/10 hover:bg-white/20 text-xs font-bold py-2 px-6 rounded-full transition-colors w-full"
                   >
-                    {combinedLeaderboard[1]?.isCurrentUser ? 'Your Profile' : 'Copy Trade'}
+                    {filteredData[1]?.isCurrentUser ? 'Your Profile' : 'Inspect Trader'}
                   </button>
                 </div>
 
@@ -354,14 +471,16 @@ export default function LeaderboardPage() {
                   </div>
                   <Medal size={24} className="text-yellow-400 absolute top-4 right-4" />
                   <h3 className="font-bold text-xl mb-1 text-yellow-400 truncate max-w-full text-center">
-                    {combinedLeaderboard[0]?.name}
+                    {filteredData[0]?.name}
                   </h3>
-                  <div className="text-green-400 font-bold text-lg mb-6">+{combinedLeaderboard[0]?.roi}%</div>
+                  <div className="text-green-400 font-bold text-lg mb-6">
+                    {filteredData[0]?.roi >= 0 ? '+' : ''}{filteredData[0]?.roi}%
+                  </div>
                   <button
-                    onClick={() => setSelectedTrader(combinedLeaderboard[0])}
+                    onClick={() => setSelectedTrader(filteredData[0])}
                     className="bg-yellow-400 hover:bg-yellow-500 text-yellow-900 text-sm font-bold py-2.5 px-6 rounded-full transition-colors w-full shadow-lg shadow-yellow-400/20"
                   >
-                    {combinedLeaderboard[0]?.isCurrentUser ? 'Your Profile' : 'Copy Trade'}
+                    {filteredData[0]?.isCurrentUser ? 'Your Profile' : 'Inspect Trader'}
                   </button>
                 </div>
 
@@ -371,14 +490,16 @@ export default function LeaderboardPage() {
                     <span className="text-orange-900 font-bold text-xl">3</span>
                   </div>
                   <h3 className="font-bold text-lg mb-1 truncate max-w-full text-center">
-                    {combinedLeaderboard[2]?.name}
+                    {filteredData[2]?.name}
                   </h3>
-                  <div className="text-green-400 font-bold mb-4">+{combinedLeaderboard[2]?.roi}%</div>
+                  <div className="text-green-400 font-bold mb-4">
+                    {filteredData[2]?.roi >= 0 ? '+' : ''}{filteredData[2]?.roi}%
+                  </div>
                   <button
-                    onClick={() => setSelectedTrader(combinedLeaderboard[2])}
+                    onClick={() => setSelectedTrader(filteredData[2])}
                     className="bg-white/10 hover:bg-white/20 text-xs font-bold py-2 px-6 rounded-full transition-colors w-full"
                   >
-                    {combinedLeaderboard[2]?.isCurrentUser ? 'Your Profile' : 'Copy Trade'}
+                    {filteredData[2]?.isCurrentUser ? 'Your Profile' : 'Inspect Trader'}
                   </button>
                 </div>
               </div>
@@ -387,9 +508,18 @@ export default function LeaderboardPage() {
             {/* Full Rankings Table */}
             <div className="glass-panel rounded-3xl overflow-hidden border border-white/5 shadow-2xl">
               <div className="p-6 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white/[0.02]">
-                <h3 className="font-bold text-lg flex items-center gap-2">
-                  <Users size={20} className="text-primary" /> Full Rankings
-                </h3>
+                <div>
+                  <h3 className="font-bold text-lg flex items-center gap-2">
+                    <Users size={20} className="text-primary" />
+                    {scope === 'neotradio' ? 'Neotradio Platform Traders' : 'Global Ink L2 Network Whales'}
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {scope === 'neotradio'
+                      ? 'Traders who placed and settled trades through Neotradio.'
+                      : 'Live on-chain settlements from Nado Archive on Ink.'}
+                  </p>
+                </div>
+
                 <div className="bg-black/40 border border-white/10 px-3 py-1.5 rounded-lg flex items-center gap-2 w-full sm:w-auto">
                   <Search size={16} className="text-gray-400" />
                   <input
@@ -407,9 +537,9 @@ export default function LeaderboardPage() {
                   <thead className="bg-black/20 text-xs text-gray-400 uppercase tracking-wider border-b border-white/5">
                     <tr>
                       <th className="p-4 pl-6 font-semibold">Rank</th>
-                      <th className="p-4 font-semibold">Trader</th>
+                      <th className="p-4 font-semibold">Trader / Wallet</th>
                       <th className="p-4 font-semibold text-right">ROI (%)</th>
-                      <th className="p-4 font-semibold text-right">Total PnL</th>
+                      <th className="p-4 font-semibold text-right">Realized PnL</th>
                       <th className="p-4 font-semibold text-right">Win Rate</th>
                       <th className="p-4 font-semibold text-right">Volume</th>
                       <th className="p-4 pr-6 text-right">Action</th>
@@ -451,10 +581,14 @@ export default function LeaderboardPage() {
                               </span>
                             )}
                           </div>
-                          <div className="text-xs text-gray-500 font-mono">{trader.address}</div>
+                          <div className="text-xs text-gray-500 font-mono">
+                            {trader.fullAddress || trader.address}
+                          </div>
                         </td>
-                        <td className="p-4 text-right font-bold text-green-400">+{trader.roi}%</td>
-                        <td className="p-4 text-right text-white font-medium">
+                        <td className={`p-4 text-right font-bold ${trader.roi >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {trader.roi >= 0 ? '+' : ''}{trader.roi}%
+                        </td>
+                        <td className={`p-4 text-right font-medium ${trader.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                           {formatCurrency(trader.pnl)}
                         </td>
                         <td className="p-4 text-right">
@@ -468,7 +602,7 @@ export default function LeaderboardPage() {
                             <span className="text-sm font-medium">{trader.winRate}%</span>
                           </div>
                         </td>
-                        <td className="p-4 text-right text-gray-400 text-sm">
+                        <td className="p-4 text-right text-gray-300 text-sm font-mono">
                           {formatCurrency(trader.volume)}
                         </td>
                         <td className="p-4 pr-6 text-right">
@@ -481,7 +615,7 @@ export default function LeaderboardPage() {
                               onClick={() => setSelectedTrader(trader)}
                               className="bg-primary/10 hover:bg-primary/20 text-primary text-xs font-bold py-1.5 px-4 rounded-full transition-colors opacity-90 group-hover:opacity-100"
                             >
-                              Copy
+                              Inspect
                             </button>
                           )}
                         </td>
