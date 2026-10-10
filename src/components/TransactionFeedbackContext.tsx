@@ -5,12 +5,23 @@ import { Loader2, CheckCircle2, AlertCircle, ExternalLink, X } from 'lucide-reac
 
 export type TxStatus = 'waiting_wallet' | 'submitted' | 'confirming' | 'success' | 'error';
 
+export interface TransactionDetails {
+  orderId?: string;
+  price?: number;
+  amount?: number;
+  side?: string;
+  market?: string;
+  execMode?: string;
+  pnl?: number;
+}
+
 interface Transaction {
   id: string;
   title: string;
   status: TxStatus;
   hash?: string;
   errorMessage?: string;
+  details?: TransactionDetails;
 }
 
 interface TransactionFeedbackContextType {
@@ -72,45 +83,96 @@ export function TransactionFeedbackProvider({ children }: { children: ReactNode 
     <TransactionFeedbackContext.Provider value={{ transactions, startTransaction, updateTransaction, dismissTransaction, simulateTransaction }}>
       {children}
       
-      {/* Toast Container */}
-      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none w-[320px]">
+      {/* Toast Container - Elevated above taskbar */}
+      <div className="fixed bottom-24 sm:bottom-28 right-4 sm:right-6 z-50 flex flex-col gap-2.5 pointer-events-none w-[360px] max-w-[calc(100vw-32px)]">
         {transactions.map(tx => (
-          <div key={tx.id} className="pointer-events-auto glass-panel bg-black/80 border border-white/10 rounded-xl p-4 shadow-2xl flex flex-col gap-2 transform transition-all translate-y-0 opacity-100">
+          <div key={tx.id} className="pointer-events-auto glass-panel bg-[#0b1329]/95 border border-primary/30 rounded-xl p-4 shadow-[0_12px_40px_rgba(0,0,0,0.85)] backdrop-blur-xl flex flex-col gap-2.5 transform transition-all translate-y-0 opacity-100">
             <div className="flex justify-between items-start">
-              <h4 className="text-sm font-bold text-white">{tx.title}</h4>
-              {tx.status === 'success' || tx.status === 'error' ? (
-                <button onClick={() => dismissTransaction(tx.id)} className="text-gray-400 hover:text-white transition-colors">
-                  <X size={16} />
-                </button>
-              ) : null}
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${tx.status === 'success' ? 'bg-green-400' : tx.status === 'error' ? 'bg-red-400' : 'bg-primary animate-pulse'}`} />
+                <h4 className="text-sm font-bold text-white">{tx.title}</h4>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {tx.details?.execMode && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-gray-300 font-mono">
+                    {tx.details.execMode}
+                  </span>
+                )}
+                {tx.status === 'success' || tx.status === 'error' ? (
+                  <button onClick={() => dismissTransaction(tx.id)} className="text-gray-400 hover:text-white transition-colors p-1" title="Dismiss">
+                    <X size={15} />
+                  </button>
+                ) : null}
+              </div>
             </div>
             
             <div className="flex items-center gap-2 text-xs font-medium">
               {tx.status === 'waiting_wallet' && (
-                <><Loader2 size={14} className="animate-spin text-primary" /><span className="text-primary">Confirm in wallet</span></>
+                <><Loader2 size={14} className="animate-spin text-primary" /><span className="text-primary font-semibold">Confirm in wallet...</span></>
               )}
               {tx.status === 'submitted' && (
-                <><Loader2 size={14} className="animate-spin text-yellow-400" /><span className="text-yellow-400">Transaction submitted</span></>
+                <><Loader2 size={14} className="animate-spin text-yellow-400" /><span className="text-yellow-400 font-semibold">Transaction submitted</span></>
               )}
               {tx.status === 'confirming' && (
-                <><Loader2 size={14} className="animate-spin text-blue-400" /><span className="text-blue-400">Confirming...</span></>
+                <><Loader2 size={14} className="animate-spin text-blue-400" /><span className="text-blue-400 font-semibold">Confirming on-chain...</span></>
               )}
               {tx.status === 'success' && (
-                <><CheckCircle2 size={14} className="text-green-500" /><span className="text-green-500">Transaction successful</span></>
+                <><CheckCircle2 size={14} className="text-green-400" /><span className="text-green-400 font-bold">Confirmed successfully!</span></>
               )}
               {tx.status === 'error' && (
-                <><AlertCircle size={14} className="text-red-500" /><span className="text-red-500">{tx.errorMessage || 'Transaction failed'}</span></>
+                <><AlertCircle size={14} className="text-red-400" /><span className="text-red-400 font-semibold">{tx.errorMessage || 'Transaction failed'}</span></>
               )}
             </div>
+
+            {/* Rich Trade Details */}
+            {tx.details && (
+              <div className="mt-1 pt-2 border-t border-white/10 text-[11px] font-mono text-gray-300 space-y-1 bg-black/30 p-2 rounded-lg">
+                {tx.details.market && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Market:</span>
+                    <span className="font-bold text-white flex items-center gap-1">
+                      {tx.details.side && (
+                        <span className={`px-1.5 py-0.2 rounded text-[10px] font-sans font-bold ${
+                          tx.details.side.toUpperCase().includes('LONG') || tx.details.side.toUpperCase() === 'BUY'
+                            ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                            : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                        }`}>
+                          {tx.details.side}
+                        </span>
+                      )}
+                      {tx.details.market}
+                    </span>
+                  </div>
+                )}
+                {tx.details.price !== undefined && tx.details.price > 0 && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Execution Price:</span>
+                    <span className="text-green-400 font-bold">${tx.details.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</span>
+                  </div>
+                )}
+                {tx.details.amount !== undefined && tx.details.amount > 0 && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Size:</span>
+                    <span className="text-white font-bold">{tx.details.amount.toFixed(4)}</span>
+                  </div>
+                )}
+                {tx.details.orderId && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Order Ref:</span>
+                    <span className="text-gray-300 font-mono text-[10px]">{tx.details.orderId.slice(0, 16)}...</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {tx.hash && (
               <a 
                 href={`https://explorer.inkonchain.com/tx/${tx.hash}`}
                 target="_blank"
                 rel="noreferrer"
-                className="text-[10px] text-gray-500 hover:text-primary flex items-center gap-1 mt-1 w-max transition-colors"
+                className="text-[11px] text-primary hover:underline font-mono flex items-center gap-1 mt-1 w-max transition-colors"
               >
-                View on Explorer <ExternalLink size={10} />
+                View on Ink Explorer <ExternalLink size={11} />
               </a>
             )}
           </div>

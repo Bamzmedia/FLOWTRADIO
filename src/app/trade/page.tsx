@@ -201,6 +201,13 @@ function TradeContent() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
+  const pushToast = (notice: ToastNotice) => {
+    setToasts((prev) => [...prev, notice]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== notice.id));
+    }, 8000);
+  };
+
   // Helper: map product ID to market display name
   const getMarketName = (prodId: number | string) => {
     const id = Number(prodId);
@@ -791,8 +798,33 @@ function TradeContent() {
       setTakeProfit('');
       setStopLoss('');
       setTrailingPct('');
-      updateTransaction(txId, { status: 'success' });
-      setTimeout(() => dismissTransaction(txId), 4000);
+      updateTransaction(txId, {
+        status: 'success',
+        details: {
+          orderId: orderIdRes,
+          price: orderExecPrice,
+          amount: positionSizeAsset,
+          side: tradeDirection.toUpperCase(),
+          market: activeMarket.name,
+          execMode,
+        },
+      });
+      setTimeout(() => dismissTransaction(txId), 7000);
+
+      // Also trigger rich trade receipt notification
+      pushToast({
+        id: `order_fill_${Date.now()}`,
+        type: 'success',
+        title: `Order Filled: ${tradeDirection.toUpperCase()} ${assetName}`,
+        message: `Filled ${positionSizeAsset.toFixed(4)} ${assetName} order on Nado.`,
+        receipt: {
+          orderId: orderIdRes,
+          price: orderExecPrice,
+          amount: positionSizeAsset,
+          side: tradeDirection === 'long' ? 'buy' : 'sell',
+          execMode,
+        },
+      });
     } catch (err: any) {
       console.error('[OrderExecution] Execution error:', err);
       updateTransaction(txId, { status: 'error', errorMessage: err.message || 'Off-chain matching engine rejected order payload.' });
@@ -924,27 +956,27 @@ function TradeContent() {
       refresh();
 
       setToasts((prev) => prev.filter((t) => t.id !== toastId));
-      setToasts((prev) => [
-        ...prev,
-        {
-          id: `closed_${Date.now()}`,
-          type: 'success',
-          title: 'Position Close Submitted',
-          message: `Closed position on ${getMarketName(pos.productId)}.`,
+      pushToast({
+        id: `closed_${Date.now()}`,
+        type: 'success',
+        title: 'Position Close Submitted',
+        message: `Successfully closed position on ${getMarketName(pos.productId)}.`,
+        receipt: {
+          orderId: `close_${Date.now()}`,
+          amount: Math.abs(pos.amount),
+          side: pos.amount > 0 ? 'sell' : 'buy',
+          execMode: 'REST',
         },
-      ]);
+      });
     } catch (err: any) {
       console.error('[ClosePosition] Error closing position:', err);
       setToasts((prev) => prev.filter((t) => t.id !== toastId));
-      setToasts((prev) => [
-        ...prev,
-        {
-          id: `err_close_${Date.now()}`,
-          type: 'error',
-          title: 'Close Position Failed',
-          message: err.message || 'Sequencer rejected close order.',
-        },
-      ]);
+      pushToast({
+        id: `err_close_${Date.now()}`,
+        type: 'error',
+        title: 'Close Position Failed',
+        message: err.message || 'Sequencer rejected close order.',
+      });
     } finally {
       delete closingPosRef.current[pos.productId];
       setClosingPositionId(null);
@@ -1143,7 +1175,7 @@ function TradeContent() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-3 text-xs font-mono">
+              <div className="flex-1 overflow-y-auto p-3 pb-8 custom-scrollbar text-xs font-mono">
                 {activeTab === 'positions' && (
                   <div>
                     {Object.entries(userPositions).filter(([_, pos]) => Math.abs(pos.amount) > 1e-6).length === 0 ? (
@@ -1411,7 +1443,7 @@ function TradeContent() {
           </div>
 
           {/* Right Column: Order Entry */}
-          <div className="w-full lg:w-80 flex-shrink-0 flex flex-col bg-black/40 p-4 pb-20 lg:pb-4">
+          <div className="w-full lg:w-80 flex-shrink-0 flex flex-col bg-black/40 p-4 pb-28 lg:pb-24 overflow-y-auto custom-scrollbar">
             {/* Execution Mode Selector: REST vs WebSocket */}
             <div className="mb-3 flex items-center justify-between bg-black/60 p-1.5 rounded-xl border border-white/5">
               <span className="text-xs text-gray-400 font-medium px-2 flex items-center gap-1">
@@ -1721,17 +1753,17 @@ function TradeContent() {
         </div>
       </main>
 
-      {/* Floating Toast Notification Feedback Container */}
-      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+      {/* Floating Toast Notification Feedback Container - Elevated above taskbar */}
+      <div className="fixed bottom-24 sm:bottom-28 right-4 sm:right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className={`pointer-events-auto p-4 rounded-xl shadow-2xl border backdrop-blur-md transition-all duration-300 flex items-start gap-3 ${
+            className={`pointer-events-auto p-4 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.85)] border backdrop-blur-xl transition-all duration-300 flex items-start gap-3 ${
               toast.type === 'pending'
-                ? 'bg-blue-950/80 border-blue-500/30 text-blue-200'
+                ? 'bg-[#08152e]/95 border-blue-500/40 text-blue-200'
                 : toast.type === 'success'
-                ? 'bg-green-950/80 border-green-500/30 text-green-200'
-                : 'bg-red-950/80 border-red-500/30 text-red-200'
+                ? 'bg-[#082218]/95 border-green-500/40 text-green-200'
+                : 'bg-[#260c12]/95 border-red-500/40 text-red-200'
             }`}
           >
             {toast.type === 'pending' && <Loader2 size={18} className="animate-spin text-blue-400 shrink-0 mt-0.5" />}
@@ -1740,7 +1772,10 @@ function TradeContent() {
 
             <div className="flex-1 text-xs">
               <div className="font-bold text-sm text-white mb-0.5 flex items-center justify-between">
-                <span>{toast.title}</span>
+                <span className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${toast.type === 'success' ? 'bg-green-400' : toast.type === 'error' ? 'bg-red-400' : 'bg-primary animate-pulse'}`} />
+                  {toast.title}
+                </span>
                 {toast.receipt?.execMode && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-gray-300 font-mono">
                     {toast.receipt.execMode}
@@ -1749,26 +1784,47 @@ function TradeContent() {
               </div>
               <p className="text-gray-300 leading-relaxed">{toast.message}</p>
 
-              {/* Fill Receipt Details */}
+              {/* Rich Fill Receipt Details */}
               {toast.receipt && (
-                <div className="mt-2 pt-2 border-t border-white/10 text-[11px] font-mono text-gray-400 space-y-1">
-                  <div className="flex justify-between">
-                    <span>Order Ref:</span>
-                    <span className="text-white">{toast.receipt.orderId?.slice(0, 14)}...</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Execution Price:</span>
-                    <span className="text-green-400 font-bold">${toast.receipt.price?.toFixed(2)}</span>
-                  </div>
+                <div className="mt-2 pt-2 border-t border-white/10 text-[11px] font-mono text-gray-300 space-y-1 bg-black/40 p-2.5 rounded-lg">
+                  {toast.receipt.side && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-400">Side:</span>
+                      <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                        toast.receipt.side === 'buy' ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                      }`}>
+                        {toast.receipt.side.toUpperCase()}
+                      </span>
+                    </div>
+                  )}
+                  {toast.receipt.price !== undefined && toast.receipt.price > 0 && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-400">Execution Price:</span>
+                      <span className="text-green-400 font-bold">${toast.receipt.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</span>
+                    </div>
+                  )}
+                  {toast.receipt.amount !== undefined && toast.receipt.amount > 0 && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-400">Size:</span>
+                      <span className="text-white font-bold">{toast.receipt.amount.toFixed(4)}</span>
+                    </div>
+                  )}
+                  {toast.receipt.orderId && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-400">Order Ref:</span>
+                      <span className="text-gray-300 font-mono text-[10px]">{toast.receipt.orderId.slice(0, 16)}...</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
 
             <button
               onClick={() => removeToast(toast.id)}
-              className="text-gray-400 hover:text-white transition-colors p-0.5"
+              className="text-gray-400 hover:text-white transition-colors p-1"
+              title="Dismiss"
             >
-              <X size={14} />
+              <X size={15} />
             </button>
           </div>
         ))}

@@ -102,8 +102,8 @@ export default function SubaccountModal({
         const tokenAmount = ethers.parseUnits(numAmount.toFixed(6), 6); // 6 decimals
 
         const [usdt0Bal, usdcBal] = await Promise.all([
-          usdt0Token.balanceOf(userAddr).catch(() => 0n),
-          usdcToken.balanceOf(userAddr).catch(() => 0n),
+          usdt0Token.balanceOf(userAddr).catch(() => BigInt(0)),
+          usdcToken.balanceOf(userAddr).catch(() => BigInt(0)),
         ]);
 
         let depositToken = usdt0Token;

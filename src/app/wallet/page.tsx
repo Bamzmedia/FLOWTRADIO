@@ -125,8 +125,8 @@ export default function WalletPage() {
 
         // Check balances to see if user holds USDC or USD₮0
         const [usdt0Bal, usdcBal] = await Promise.all([
-          usdt0Token.balanceOf(userAddr).catch(() => 0n),
-          usdcToken.balanceOf(userAddr).catch(() => 0n),
+          usdt0Token.balanceOf(userAddr).catch(() => BigInt(0)),
+          usdcToken.balanceOf(userAddr).catch(() => BigInt(0)),
         ]);
 
         let depositToken = usdt0Token;
