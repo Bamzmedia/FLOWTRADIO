@@ -12,7 +12,7 @@ import { useNadoWebSocket } from '@/hooks/useNadoWebSocket';
 import { useNadoMarketData } from '@/hooks/useNadoMarketData';
 import { ethers } from 'ethers';
 import { useAppKitAccount, useAppKitProvider } from '@reown/appkit/react';
-import { placeOrder, fetchNadoAllProducts, getOrderNonce, cancelNadoOrder, fetchHistoricalOHLCV, buildOrderAppendix, NadoOrderExecutionType, NADO_EIP712_ORDER_TYPES, getOrderVerifyingContract } from '@/nado/nadoApi';
+import { placeOrder, fetchNadoAllProducts, getOrderNonce, cancelNadoOrder, fetchHistoricalOHLCV, buildOrderAppendix, NadoOrderExecutionType, NADO_EIP712_ORDER_TYPES, getOrderVerifyingContract, quantizePriceX18, quantizeAmountX18 } from '@/nado/nadoApi';
 import { formatSubaccountSender, useNadoUserStream } from '@/hooks/useNadoUserStream';
 import SubaccountModal from '@/components/SubaccountModal';
 import { NadoOrder } from '@/types/nado';
@@ -650,10 +650,10 @@ function TradeContent() {
         }
       }
 
-      // Quantity calculation with exact sign & 1e18 precision
+      // Quantity & price calculations quantized strictly to product increments
       const rawAmount = positionSizeAsset * (activeDirection === 'long' ? 1 : -1);
-      const amountX18 = toX18String(rawAmount);
-      const priceX18 = toX18String(orderExecPrice);
+      const amountX18 = quantizeAmountX18(rawAmount, productId);
+      const priceX18 = quantizePriceX18(orderExecPrice, productId);
 
       let sender = formatSubaccountSender(activeUserAddress, 'default');
 
@@ -935,8 +935,8 @@ function TradeContent() {
       // To close a SHORT (pos.amount < 0), place a BUY with aggressive slip (e.g. price * 1.05)
       const closeAmount = -pos.amount;
       const closePrice = closeAmount > 0 ? price * 1.05 : price * 0.95;
-      const amountX18 = toX18String(closeAmount);
-      const priceX18 = toX18String(closePrice);
+      const amountX18 = quantizeAmountX18(closeAmount, pos.productId);
+      const priceX18 = quantizePriceX18(closePrice, pos.productId);
       const expiration = (Math.floor(Date.now() / 1000) + 300).toString();
       const nonce = getOrderNonce();
 

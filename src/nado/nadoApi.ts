@@ -1,3 +1,4 @@
+import { ethers } from 'ethers';
 import { NadoEnv, NadoOrder, PlaceOrderPayload, SubaccountState, SubaccountPosition, OHLCVBar, PastFill, NadoSpotAsset, NadoPerpPosition, NadoUserPortfolio } from '../types/nado';
 
 // Retrieve Nado Env configuration
@@ -329,6 +330,66 @@ export const NADO_EIP712_ORDER_TYPES = {
 export function getOrderVerifyingContract(productId: number): string {
   const hex = productId.toString(16).padStart(40, '0');
   return '0x' + hex;
+}
+
+/**
+ * On-chain & Sequencer orderbook tick and step increments from Nado book_info
+ */
+export const PRODUCT_INCREMENTS: Record<number, { priceIncrementX18: string; sizeIncrementX18: string }> = {
+  2: { priceIncrementX18: '1000000000000000000', sizeIncrementX18: '50000000000000' }, // BTC-PERP (tick: 1, step: 0.00005)
+  4: { priceIncrementX18: '100000000000000000', sizeIncrementX18: '1000000000000000' }, // ETH-PERP (tick: 0.1, step: 0.001)
+  8: { priceIncrementX18: '10000000000000000', sizeIncrementX18: '100000000000000000' }, // SOL-PERP (tick: 0.01, step: 0.1)
+};
+
+/**
+ * Quantizes order price in x18 format to be strictly divisible by price_increment_x18.
+ * Avoids IEEE 754 precision artifacts that trigger sequencer rejection.
+ */
+export function quantizePriceX18(price: number | string, productId: number): string {
+  const num = typeof price === 'string' ? parseFloat(price) : price;
+  if (isNaN(num) || !isFinite(num)) return '0';
+
+  const fixedStr = Math.abs(num).toFixed(6);
+  let rawBig = ethers.parseUnits(fixedStr, 18);
+
+  const incStr = PRODUCT_INCREMENTS[productId]?.priceIncrementX18 || '10000000000000000';
+  const inc = BigInt(incStr);
+  if (inc > BigInt(0)) {
+    const remainder = rawBig % inc;
+    if (remainder !== BigInt(0)) {
+      rawBig = rawBig - remainder;
+    }
+  }
+
+  return (num < 0 ? -rawBig : rawBig).toString();
+}
+
+/**
+ * Quantizes order size/amount in x18 format to be strictly divisible by size_increment.
+ * Ensures the order meets minimum step size increments.
+ */
+export function quantizeAmountX18(amount: number | string, productId: number): string {
+  const num = typeof amount === 'string' ? parseFloat(amount) : amount;
+  if (isNaN(num) || !isFinite(num)) return '0';
+
+  const isNegative = num < 0;
+  const absNum = Math.abs(num);
+  const fixedStr = absNum.toFixed(6);
+  let rawBig = ethers.parseUnits(fixedStr, 18);
+
+  const incStr = PRODUCT_INCREMENTS[productId]?.sizeIncrementX18 || '100000000000000000';
+  const inc = BigInt(incStr);
+  if (inc > BigInt(0)) {
+    const remainder = rawBig % inc;
+    if (remainder !== BigInt(0)) {
+      rawBig = rawBig - remainder;
+    }
+    if (rawBig < inc) {
+      rawBig = inc;
+    }
+  }
+
+  return (isNegative ? -rawBig : rawBig).toString();
 }
 
 /**
