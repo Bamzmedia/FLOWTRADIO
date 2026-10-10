@@ -594,6 +594,17 @@ function TradeContent() {
       return;
     }
 
+    if (positionSizeUsd < 100) {
+      const minLev = Math.ceil(100 / (numPayAmount || 1));
+      pushToast({
+        id: Date.now().toString(),
+        type: 'error',
+        title: 'Order Below Minimum Size ($100)',
+        message: `Nado exchange requires a minimum order value of $100. With $${numPayAmount.toFixed(2)} margin, increase your leverage to at least ${minLev}x (gives $${(numPayAmount * minLev).toFixed(2)}) or increase your margin.`,
+      });
+      return;
+    }
+
     let effectiveLimitPrice = limitPrice;
     if ((orderType === 'limit' || orderType === 'stop') && (!effectiveLimitPrice || parseFloat(effectiveLimitPrice) <= 0)) {
       if (price > 0) {
@@ -1675,8 +1686,25 @@ function TradeContent() {
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Notional Total</span>
-                  <span className="font-bold text-white">{formatCurrency(positionSizeUsd)}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`font-bold ${numPayAmount > 0 && positionSizeUsd < 100 ? 'text-amber-400' : 'text-white'}`}>
+                      {formatCurrency(positionSizeUsd)}
+                    </span>
+                    {numPayAmount > 0 && positionSizeUsd < 100 && (
+                      <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-mono font-semibold">
+                        Min $100
+                      </span>
+                    )}
+                  </div>
                 </div>
+                {numPayAmount > 0 && positionSizeUsd < 100 && (
+                  <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/25 text-[11px] text-amber-300 leading-snug flex items-start gap-1.5">
+                    <AlertCircle size={14} className="shrink-0 mt-0.5 text-amber-400" />
+                    <span>
+                      Nado exchange requires a min notional of <strong>$100</strong>. Slide leverage to <strong>{Math.ceil(100 / numPayAmount)}x</strong> or increase margin to reach $100.
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400">Est. Execution Price</span>
                   <span className="font-bold text-white">${estimatedExecutionPrice.toLocaleString(undefined, { minimumFractionDigits: activeMarket.decimals, maximumFractionDigits: activeMarket.decimals })}</span>
