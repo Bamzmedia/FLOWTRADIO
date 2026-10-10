@@ -6,7 +6,7 @@ import Navbar from '@/components/Navbar';
 import { useLocalization } from '@/components/LocalizationContext';
 import { useWallet } from '@/components/WalletContext';
 import { useTransactionFeedback } from '@/components/TransactionFeedbackContext';
-import { ChevronDown, Settings, Zap, Info, CheckCircle2, AlertCircle, Loader2, X, Globe, Radio } from 'lucide-react';
+import { ChevronDown, Settings, Zap, Info, CheckCircle2, AlertCircle, Loader2, X, Globe, Radio, TrendingUp, TrendingDown } from 'lucide-react';
 import { createChart, ColorType, CrosshairMode, CandlestickSeries } from 'lightweight-charts';
 import { useNadoWebSocket } from '@/hooks/useNadoWebSocket';
 import { useNadoMarketData } from '@/hooks/useNadoMarketData';
@@ -150,6 +150,8 @@ function TradeContent() {
     addOptimisticOrder,
     removeOptimisticOrder,
     removeOptimisticPosition,
+    addOptimisticPosition,
+    updateOptimisticSubaccount,
   } = useNadoUserStream();
   
   // Limit Order Price State
@@ -560,56 +562,45 @@ function TradeContent() {
     }
   }, [liveCandlesMap, activeProductId]);
 
-  const handleExecute = async () => {
+  const handleExecute = async (overrideDirection?: 'long' | 'short') => {
     if (isSubmittingRef.current || isSubmitting) return;
 
+    const activeDirection = overrideDirection || tradeDirection;
+    if (overrideDirection && overrideDirection !== tradeDirection) {
+      setTradeDirection(overrideDirection);
+    }
+
     if (!isConnected) {
-      const toastId = Date.now().toString();
-      setToasts((prev) => [
-        ...prev,
-        { id: toastId, type: 'error', title: 'Wallet Disconnected', message: 'Please connect your Web3 wallet to place orders.' },
-      ]);
+      pushToast({ id: Date.now().toString(), type: 'error', title: 'Wallet Disconnected', message: 'Please connect your Web3 wallet to place orders.' });
       return;
     }
     if (numPayAmount <= 0) {
-      const toastId = Date.now().toString();
-      setToasts((prev) => [
-        ...prev,
-        { id: toastId, type: 'error', title: 'Invalid Amount', message: 'Please enter a valid margin amount to trade.' },
-      ]);
+      pushToast({ id: Date.now().toString(), type: 'error', title: 'Invalid Amount', message: 'Please enter a valid margin amount to trade (e.g. $1).' });
       return;
     }
 
     const effectiveTradingBalance =
-      subaccountInfo && subaccountInfo.freeCollateral > 0
+      subaccountInfo && typeof subaccountInfo.freeCollateral === 'number'
         ? subaccountInfo.freeCollateral
         : (isConnected ? balance : 0);
 
     if (numPayAmount > effectiveTradingBalance) {
-      const toastId = Date.now().toString();
-      setToasts((prev) => [
-        ...prev,
-        {
-          id: toastId,
-          type: 'error',
-          title: 'Insufficient Balance',
-          message: `Your available trading balance ($${effectiveTradingBalance.toFixed(2)}) is insufficient for this trade ($${numPayAmount.toFixed(2)}).`,
-        },
-      ]);
+      pushToast({
+        id: Date.now().toString(),
+        type: 'error',
+        title: 'Insufficient Balance',
+        message: `Your available trading balance ($${effectiveTradingBalance.toFixed(2)}) is insufficient for this trade ($${numPayAmount.toFixed(2)}).`,
+      });
       return;
     }
 
     if ((orderType === 'limit' || orderType === 'stop') && (!limitPrice || parseFloat(limitPrice) <= 0)) {
-      const toastId = Date.now().toString();
-      setToasts((prev) => [
-        ...prev,
-        {
-          id: toastId,
-          type: 'error',
-          title: 'Invalid Limit Price',
-          message: 'Please enter a valid positive price for your limit order.',
-        },
-      ]);
+      pushToast({
+        id: Date.now().toString(),
+        type: 'error',
+        title: 'Invalid Limit Price',
+        message: 'Please enter a valid positive price for your limit order.',
+      });
       return;
     }
 
@@ -619,7 +610,7 @@ function TradeContent() {
     const productId = activeMarket.productId;
 
     // 1. Add Pending Toast Feedback State
-    const txId = startTransaction(`Open ${tradeDirection === 'long' ? 'Long' : 'Short'} ${activeMarket.name.split('-')[0]}`);
+    const txId = startTransaction(`Open ${activeDirection === 'long' ? 'Long' : 'Short'} ${activeMarket.name.split('-')[0]}`);
 
     try {
       const activeUserAddress = appKitAddress || walletContextAddress;
@@ -644,7 +635,7 @@ function TradeContent() {
         orderExecPrice = parseFloat(limitPrice) || parseFloat(stopTriggerPrice) || price;
       } else {
         const slippageMult = 1 + (parseFloat(slippagePct) || 1) / 100;
-        if (tradeDirection === 'long') {
+        if (activeDirection === 'long') {
           const bestAsk = orderBookAsks.length > 0 ? orderBookAsks[0].price : price;
           orderExecPrice = bestAsk * slippageMult;
         } else {
@@ -654,7 +645,7 @@ function TradeContent() {
       }
 
       // Quantity calculation with exact sign & 1e18 precision
-      const rawAmount = positionSizeAsset * (tradeDirection === 'long' ? 1 : -1);
+      const rawAmount = positionSizeAsset * (activeDirection === 'long' ? 1 : -1);
       const amountX18 = toX18String(rawAmount);
       const priceX18 = toX18String(orderExecPrice);
 
@@ -804,24 +795,41 @@ function TradeContent() {
           orderId: orderIdRes,
           price: orderExecPrice,
           amount: positionSizeAsset,
-          side: tradeDirection.toUpperCase(),
+          side: activeDirection.toUpperCase(),
           market: activeMarket.name,
           execMode,
         },
       });
       setTimeout(() => dismissTransaction(txId), 7000);
 
+      // Optimistically add position so it immediately appears in Positions tab
+      addOptimisticPosition({
+        productId,
+        amount: rawAmount,
+        entryPrice: orderExecPrice,
+        realizedPnl: 0,
+        unrealizedPnl: 0,
+        marginUsage: numPayAmount,
+        timestamp: Date.now(),
+      });
+
+      // Optimistically deduct margin so $1 immediately leaves available balance
+      updateOptimisticSubaccount({
+        freeDelta: -numPayAmount,
+        marginDelta: numPayAmount,
+      });
+
       // Also trigger rich trade receipt notification
       pushToast({
         id: `order_fill_${Date.now()}`,
         type: 'success',
-        title: `Order Filled: ${tradeDirection.toUpperCase()} ${assetName}`,
+        title: `Order Filled: ${activeDirection.toUpperCase()} ${assetName}`,
         message: `Filled ${positionSizeAsset.toFixed(4)} ${assetName} order on Nado.`,
         receipt: {
           orderId: orderIdRes,
           price: orderExecPrice,
           amount: positionSizeAsset,
-          side: tradeDirection === 'long' ? 'buy' : 'sell',
+          side: activeDirection === 'long' ? 'buy' : 'sell',
           execMode,
         },
       });
@@ -1585,14 +1593,22 @@ function TradeContent() {
 
               {/* Pay Amount Input */}
               <div className="bg-black/40 border border-white/5 rounded-xl p-3 focus-within:border-primary/50 transition-colors">
-                <div className="text-sm text-gray-400 mb-2 flex justify-between font-medium">
+                <div className="text-sm text-gray-400 mb-2 flex justify-between items-center font-medium">
                   <span>Pay (Margin)</span>
-                  {isAuthenticating || isBalanceLoading ? (
+                  {isBalanceLoading ? (
                     <span className="flex items-center gap-1 text-xs text-gray-400"><Loader2 size={10} className="animate-spin" /> Loading...</span>
-                  ) : balanceError ? (
-                    <span className="text-red-400 flex items-center gap-1 text-xs"><AlertCircle size={10} /> Error (Retry)</span>
                   ) : (
-                    <span>Bal: {formatCurrency(subaccountInfo && subaccountInfo.freeCollateral > 0 ? subaccountInfo.freeCollateral : (isConnected ? balance : 0))}</span>
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-gray-400">Available:</span>
+                      <span className="font-bold text-green-400 font-mono">
+                        ${(subaccountInfo && typeof subaccountInfo.freeCollateral === 'number' ? subaccountInfo.freeCollateral : (isConnected ? balance : 0)).toFixed(2)}
+                      </span>
+                      {subaccountInfo && subaccountInfo.marginUsage > 0 && (
+                        <span className="text-[10px] text-yellow-400/90 font-mono" title="Margin locked in active positions">
+                          (Used: ${subaccountInfo.marginUsage.toFixed(2)})
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
                 <div className="flex justify-between items-center">
@@ -1607,6 +1623,24 @@ function TradeContent() {
                     <div className="w-3 h-3 rounded-full bg-blue-500" />
                     <span className="font-semibold text-white">USDC</span>
                   </div>
+                </div>
+
+                {/* Quick Percentage Chips */}
+                <div className="flex gap-1.5 mt-2.5 pt-2 border-t border-white/5">
+                  {[0.25, 0.5, 0.75, 1.0].map((pct) => (
+                    <button
+                      key={pct}
+                      type="button"
+                      onClick={() => {
+                        const avail = subaccountInfo && typeof subaccountInfo.freeCollateral === 'number' ? subaccountInfo.freeCollateral : (isConnected ? balance : 0);
+                        const calculated = Math.max(0, avail * pct);
+                        setPayAmount(calculated > 0 ? (pct === 1.0 ? calculated.toFixed(2) : calculated.toFixed(2)) : '');
+                      }}
+                      className="flex-1 py-1 text-[10px] font-bold rounded bg-white/5 hover:bg-primary/20 hover:text-primary text-gray-400 transition-all cursor-pointer"
+                    >
+                      {pct === 1.0 ? 'MAX' : `${pct * 100}%`}
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -1723,18 +1757,63 @@ function TradeContent() {
               </div>
             </div>
 
-            <button 
-              disabled={isSubmitting || (isConnected && (isAuthenticating || isBalanceLoading || isMarketLoading || !!marketError || !!balanceError))}
-              onClick={isConnected ? handleExecute : () => connect()}
-              className={`w-full mt-6 font-bold py-3 rounded-xl transition-all duration-300 text-background shadow-lg flex items-center justify-center gap-2 ${
-                isSubmitting ? 'opacity-50 cursor-not-allowed bg-gray-500' :
-                !isConnected ? 'bg-primary hover:bg-primary/90 text-background shadow-[0_0_15px_rgba(0,240,255,0.4)] cursor-pointer' :
-                tradeDirection === 'long' ? 'bg-green-500 hover:bg-green-400 shadow-green-500/20' : 'bg-red-500 hover:bg-red-400 shadow-red-500/20'
-              }`}
-            >
-              {isSubmitting && <Loader2 size={16} className="animate-spin" />}
-              {isConnected ? `Execute ${tradeDirection === 'long' ? 'Long' : 'Short'} (${execMode})` : `Connect Wallet`}
-            </button>
+            {!isConnected ? (
+              <button
+                type="button"
+                onClick={() => connect()}
+                className="w-full mt-6 font-bold py-3.5 rounded-xl transition-all duration-300 bg-primary hover:bg-primary/90 text-background shadow-[0_0_20px_rgba(0,240,255,0.4)] flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
+              >
+                Connect Wallet to Trade
+              </button>
+            ) : (
+              <div className="flex flex-col gap-2 mt-5">
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => handleExecute('long')}
+                    className={`py-3.5 px-3 rounded-xl font-bold text-sm transition-all duration-200 flex items-center justify-center gap-2 shadow-lg cursor-pointer active:scale-[0.98] ${
+                      isSubmitting && tradeDirection === 'long'
+                        ? 'bg-green-600/70 text-black/70 cursor-not-allowed'
+                        : tradeDirection === 'long'
+                        ? 'bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400 text-black shadow-green-500/30 ring-2 ring-green-400/60'
+                        : 'bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/30'
+                    }`}
+                  >
+                    {isSubmitting && tradeDirection === 'long' ? (
+                      <Loader2 size={16} className="animate-spin text-black" />
+                    ) : (
+                      <TrendingUp size={16} />
+                    )}
+                    <span>Buy / Long</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => handleExecute('short')}
+                    className={`py-3.5 px-3 rounded-xl font-bold text-sm transition-all duration-200 flex items-center justify-center gap-2 shadow-lg cursor-pointer active:scale-[0.98] ${
+                      isSubmitting && tradeDirection === 'short'
+                        ? 'bg-red-600/70 text-white/70 cursor-not-allowed'
+                        : tradeDirection === 'short'
+                        ? 'bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-400 hover:to-rose-500 text-white shadow-red-500/30 ring-2 ring-red-400/60'
+                        : 'bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30'
+                    }`}
+                  >
+                    {isSubmitting && tradeDirection === 'short' ? (
+                      <Loader2 size={16} className="animate-spin text-white" />
+                    ) : (
+                      <TrendingDown size={16} />
+                    )}
+                    <span>Sell / Short</span>
+                  </button>
+                </div>
+
+                <div className="text-[11px] text-center text-gray-400 flex items-center justify-center gap-2 py-0.5">
+                  <span>Routing via <span className="font-mono text-primary font-bold">{execMode === 'REST' ? 'REST API (Low Latency)' : 'WS Gateway Stream'}</span></span>
+                </div>
+              </div>
+            )}
             
             <div className="flex items-center justify-between mt-4">
               <div className="flex items-center gap-1 text-xs text-gray-500">

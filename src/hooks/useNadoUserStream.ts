@@ -426,6 +426,25 @@ export function useNadoUserStream() {
     });
   }, []);
 
+  const addOptimisticPosition = useCallback((pos: ParsedSubaccountPosition) => {
+    setPositions((prev) => ({
+      ...prev,
+      [pos.productId]: pos,
+    }));
+  }, []);
+
+  const updateOptimisticSubaccount = useCallback((delta: { marginDelta: number; freeDelta: number }) => {
+    setSubaccountInfo((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        freeCollateral: Math.max(0, prev.freeCollateral + delta.freeDelta),
+        marginUsage: Math.max(0, prev.marginUsage + delta.marginDelta),
+        timestamp: Date.now(),
+      };
+    });
+  }, []);
+
   return {
     isAuthenticated,
     isAuthenticating,
@@ -439,5 +458,7 @@ export function useNadoUserStream() {
     addOptimisticOrder,
     removeOptimisticOrder,
     removeOptimisticPosition,
+    addOptimisticPosition,
+    updateOptimisticSubaccount,
   };
 }

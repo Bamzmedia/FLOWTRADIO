@@ -315,7 +315,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setSubaccountNames(subs);
       setActiveSubaccount(activeSub);
 
-      const activeNadoBal = liveNadoFree > 0 ? liveNadoFree : liveNadoTotal;
+      const activeNadoBal = liveNadoMargin > 0 ? liveNadoFree : (liveNadoFree > 0 ? liveNadoFree : liveNadoTotal);
       setNadoBalance(activeNadoBal);
       setWalletUsdcBalance(walletUsdc);
       setEthBalance(ethBal);
@@ -526,7 +526,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
       if (tx.type === 'Deposit') setBalance((b) => b + tx.amount);
       if (tx.type === 'Withdraw') setBalance((b) => Math.max(0, b - tx.amount));
-      if (tx.type === 'Trade') setBalance((b) => b + tx.amount);
+      if (tx.type === 'Trade') {
+        const tradeCost = Math.abs(tx.amount);
+        setNadoFreeCollateral((prev) => Math.max(0, prev - tradeCost));
+        setNadoMarginUsage((prev) => prev + tradeCost);
+        setNadoBalance((prev) => Math.max(0, prev - tradeCost));
+        setBalance((b) => Math.max(0, b - tradeCost));
+      }
       if (tx.type === 'Stake') {
         if (tx.asset === 'USDC') setBalance((b) => Math.max(0, b - Math.abs(tx.amount)));
         else setTokenBalances((prev) => ({ ...prev, [tx.asset]: (prev[tx.asset] || 0) - Math.abs(tx.amount) }));
