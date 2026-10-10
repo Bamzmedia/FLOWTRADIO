@@ -716,6 +716,7 @@ function TradeContent() {
         amount: amountX18,
         expiration,
         nonce,
+        appendix: '0',
       };
 
       let orderIdRes = `ord_${Math.floor(Math.random() * 1000000)}`;
@@ -915,7 +916,7 @@ function TradeContent() {
       };
 
       const signature = await signer.signTypedData(domain, types, value);
-      const orderPayload: NadoOrder = { sender, priceX18, amount: amountX18, expiration, nonce };
+      const orderPayload: NadoOrder = { sender, priceX18, amount: amountX18, expiration, nonce, appendix: '0' };
 
       await placeOrder(pos.productId, orderPayload, signature);
 

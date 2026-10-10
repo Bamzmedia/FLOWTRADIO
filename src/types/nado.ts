@@ -9,6 +9,7 @@ export interface NadoOrder {
   amount: string; // Size * 1e18 as string (positive for BUY/LONG, negative for SELL/SHORT)
   expiration: string; // UNIX timestamp in seconds
   nonce: string; // Unique order nonce (timestamp in nanoseconds)
+  appendix?: string | number; // Builder/execution appendix required by Nado sequencer
 }
 
 /**

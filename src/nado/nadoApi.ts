@@ -60,9 +60,16 @@ export async function executeNadoAction(payload: any): Promise<any> {
     body: JSON.stringify(payload),
   });
 
-  const result = await response.json();
-  if (!response.ok) {
-    throw new Error(`Execute rejected (${response.status}): ${result.message || JSON.stringify(result)}`);
+  const responseText = await response.text();
+  let result: any;
+  try {
+    result = JSON.parse(responseText);
+  } catch {
+    result = { message: responseText };
+  }
+
+  if (!response.ok || result.status === 'failure') {
+    throw new Error(result.error || result.message || `Execute rejected (${response.status}): ${responseText}`);
   }
   return result;
 }
@@ -266,10 +273,15 @@ export async function placeOrder(
   const { gateway } = getNadoEndpoints();
   const url = `${gateway}/execute`;
 
+  const safeOrder: NadoOrder = {
+    ...order,
+    appendix: order.appendix !== undefined ? String(order.appendix) : '0',
+  };
+
   const payload: PlaceOrderPayload = {
     place_order: {
       product_id: productId,
-      order,
+      order: safeOrder,
       signature,
     },
   };
@@ -283,11 +295,17 @@ export async function placeOrder(
     body: JSON.stringify(payload),
   });
 
-  const result = await response.json();
+  const responseText = await response.text();
+  let result: any;
+  try {
+    result = JSON.parse(responseText);
+  } catch {
+    result = { message: responseText };
+  }
 
-  if (!response.ok) {
+  if (!response.ok || result.status === 'failure') {
     throw new Error(
-      `Order execution rejected: ${response.status} - ${result.message || JSON.stringify(result)}`
+      result.error || result.message || `Order execution rejected (${response.status}): ${responseText}`
     );
   }
 
