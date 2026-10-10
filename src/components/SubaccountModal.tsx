@@ -31,7 +31,7 @@ export default function SubaccountModal({
 
   if (!isOpen) return null;
 
-  const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT;
+  const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT || '0x05ec92D78ED421f3D3Ada77FFdE167106565974E';
   const isContractConfigured =
     Boolean(endpointContract) &&
     endpointContract !== '0x0000000000000000000000000000000000000000' &&

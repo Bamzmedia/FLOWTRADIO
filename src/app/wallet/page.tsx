@@ -101,7 +101,7 @@ export default function WalletPage() {
       const { ethers } = await import('ethers');
       const provider = new ethers.BrowserProvider(providerSource);
       const signer = await provider.getSigner();
-      const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT;
+      const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT || '0x05ec92D78ED421f3D3Ada77FFdE167106565974E';
 
       if (!endpointContract || endpointContract === '0x0000000000000000000000000000000000000000') {
         throw new Error('On-chain collateral contract deployment is pending. Direct settlement unavailable.');
