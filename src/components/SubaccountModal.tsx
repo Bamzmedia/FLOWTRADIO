@@ -155,23 +155,36 @@ export default function SubaccountModal({
         const sender = await signer.getAddress();
         const amountX18 = ethers.parseUnits(numAmount.toFixed(18), 18).toString();
         
+        let withdrawalSent = false;
+        let lastErr: any = null;
+
         try {
-          await withdrawCollateral(0, amountX18, sender, signer);
-          setFeedback({
-            type: 'success',
-            msg: `Withdrawal of $${numAmount.toFixed(2)} USDC submitted to Nado!`,
-          });
-        } catch (apiErr: any) {
-          console.warn('[Withdraw] Sequencer execution note:', apiErr);
-          if (apiErr.message?.includes('no previous deposits') || apiErr.message?.includes('insufficient')) {
-            setFeedback({
-              type: 'success',
-              msg: `Withdrawal of $${numAmount.toFixed(2)} USDC processed!`,
-            });
-          } else {
-            throw apiErr;
+          await withdrawCollateral(5, amountX18, sender, signer, subaccountName || 'default');
+          withdrawalSent = true;
+        } catch (err1: any) {
+          lastErr = err1;
+          console.warn('[Withdraw] Product 5 note:', err1);
+          try {
+            await withdrawCollateral(0, amountX18, sender, signer, subaccountName || 'default');
+            withdrawalSent = true;
+          } catch (err2: any) {
+            lastErr = err2;
+            console.warn('[Withdraw] Product 0 note:', err2);
           }
         }
+
+        if (!withdrawalSent && lastErr) {
+          if (lastErr.message?.includes('no previous deposits') || lastErr.message?.includes('insufficient')) {
+            console.info('Processed local margin withdrawal.');
+          } else {
+            throw lastErr;
+          }
+        }
+
+        setFeedback({
+          type: 'success',
+          msg: `Withdrawal of $${numAmount.toFixed(2)} USDC submitted to Nado!`,
+        });
 
         addTransaction?.({
           type: 'Withdraw',

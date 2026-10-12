@@ -168,7 +168,10 @@ function WalletContent() {
         await tx.wait();
       } else if (activeTab === 'withdraw') {
         const { withdrawCollateral } = await import('@/nado/nadoApi');
-        const sender = await signer.getAddress();
+        const signerAddr = await signer.getAddress();
+        const sender = (activeSubaccount && activeSubaccount.startsWith('0x') && activeSubaccount.length === 66)
+          ? activeSubaccount
+          : signerAddr;
         const amountX18 = ethers.parseUnits(numAmount.toFixed(18), 18).toString();
 
         const primaryPid = selectedProductId ?? (

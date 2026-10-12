@@ -135,7 +135,7 @@ export function useNadoUserStream() {
             verifyingContract?: string;
           } = {
             name: 'Nado',
-            version: '0.1.0',
+            version: '0.0.1',
             chainId,
           };
 
