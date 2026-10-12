@@ -1053,7 +1053,7 @@ export async function cancelNadoOrder(
 ): Promise<any> {
   const nonce = getOrderNonce();
   const chainId = parseInt(process.env.NEXT_PUBLIC_NADO_CHAIN_ID || '57073', 10);
-  const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT;
+  const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT || '0x05ec92D78ED421f3D3Ada77FFdE167106565974E';
 
   const domain: {
     name: string;
@@ -1114,7 +1114,7 @@ export async function withdrawCollateral(
 ): Promise<any> {
   const nonce = getOrderNonce();
   const chainId = parseInt(process.env.NEXT_PUBLIC_NADO_CHAIN_ID || '57073', 10);
-  const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT;
+  const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT || '0x05ec92D78ED421f3D3Ada77FFdE167106565974E';
   const senderBytes32 = sender.length === 66 && sender.startsWith('0x')
     ? sender
     : getSubaccountHex(sender, 'default');

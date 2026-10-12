@@ -524,8 +524,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setTimeout(() => {
       setTransactions((prev) => prev.map((t) => (t.id === newTx.id ? { ...t, status: 'Completed' } : t)));
 
-      if (tx.type === 'Deposit') setBalance((b) => b + tx.amount);
-      if (tx.type === 'Withdraw') setBalance((b) => Math.max(0, b - tx.amount));
+      if (tx.type === 'Deposit') {
+        const depAmt = Math.abs(tx.amount);
+        setBalance((b) => b + depAmt);
+        setNadoFreeCollateral((prev) => prev + depAmt);
+        setNadoCollateral((prev) => prev + depAmt);
+        setNadoBalance((prev) => prev + depAmt);
+      }
+      if (tx.type === 'Withdraw') {
+        const withdrawAmt = Math.abs(tx.amount);
+        setBalance((b) => Math.max(0, b - withdrawAmt));
+        setNadoFreeCollateral((prev) => Math.max(0, prev - withdrawAmt));
+        setNadoCollateral((prev) => Math.max(0, prev - withdrawAmt));
+        setNadoBalance((prev) => Math.max(0, prev - withdrawAmt));
+      }
       if (tx.type === 'Trade') {
         const tradeCost = Math.abs(tx.amount);
         setNadoFreeCollateral((prev) => Math.max(0, prev - tradeCost));

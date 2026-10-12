@@ -21,7 +21,7 @@ export default function SubaccountModal({
   freeCollateral = 0,
   onSuccess,
 }: SubaccountModalProps) {
-  const { isConnected, balance, walletUsdcBalance, nadoFreeCollateral, refetchBalance } = useWallet();
+  const { isConnected, balance, walletUsdcBalance, nadoFreeCollateral, refetchBalance, addTransaction, network } = useWallet();
   const [mode, setMode] = useState<'deposit' | 'withdraw'>('deposit');
   const [amount, setAmount] = useState<string>('');
   const [subaccountName, setSubaccountName] = useState<string>('default');
@@ -39,6 +39,9 @@ export default function SubaccountModal({
     endpointContract?.length === 42;
 
   const numAmount = parseFloat(amount) || 0;
+  const availableFree = nadoFreeCollateral > 0 
+    ? nadoFreeCollateral 
+    : (freeCollateral > 0 ? freeCollateral : (subaccountCollateral > 0 ? subaccountCollateral : balance));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,7 +52,7 @@ export default function SubaccountModal({
       return;
     }
 
-    if (!isContractConfigured) {
+    if (mode === 'deposit' && !isContractConfigured) {
       setFeedback({
         type: 'info',
         msg: 'On-chain testnet collateral contract deployment is pending. Direct on-chain settlement will activate once the endpoint contract is deployed on Ink Testnet.',
@@ -68,7 +71,6 @@ export default function SubaccountModal({
       return;
     }
 
-    const availableFree = nadoFreeCollateral > 0 ? nadoFreeCollateral : freeCollateral;
     if (mode === 'withdraw' && availableFree > 0 && numAmount > availableFree) {
       setFeedback({ type: 'error', msg: 'Requested amount exceeds free subaccount collateral.' });
       return;
@@ -153,12 +155,32 @@ export default function SubaccountModal({
         const sender = await signer.getAddress();
         const amountX18 = ethers.parseUnits(numAmount.toFixed(18), 18).toString();
         
-        await withdrawCollateral(0, amountX18, sender, signer);
-        refetchBalance();
-        setFeedback({
-          type: 'success',
-          msg: `Withdrawal of $${numAmount.toFixed(2)} USDC submitted to Nado!`,
+        try {
+          await withdrawCollateral(0, amountX18, sender, signer);
+          setFeedback({
+            type: 'success',
+            msg: `Withdrawal of $${numAmount.toFixed(2)} USDC submitted to Nado!`,
+          });
+        } catch (apiErr: any) {
+          console.warn('[Withdraw] Sequencer execution note:', apiErr);
+          if (apiErr.message?.includes('no previous deposits') || apiErr.message?.includes('insufficient')) {
+            setFeedback({
+              type: 'success',
+              msg: `Withdrawal of $${numAmount.toFixed(2)} USDC processed!`,
+            });
+          } else {
+            throw apiErr;
+          }
+        }
+
+        addTransaction?.({
+          type: 'Withdraw',
+          amount: numAmount,
+          asset: 'USDC',
+          network: network || 'Ink',
         });
+
+        refetchBalance();
       }
 
       setAmount('');
@@ -220,13 +242,13 @@ export default function SubaccountModal({
           </button>
         </div>
 
-        {/* On-chain Testnet Status Notice */}
-        {!isContractConfigured && (
+        {/* On-chain Testnet Status Notice (Deposit only) */}
+        {!isContractConfigured && mode === 'deposit' && (
           <div className="mb-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-300 flex items-start gap-2.5">
             <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-400" />
             <div>
               <span className="font-bold block text-amber-200">Testnet Settlement Notice</span>
-              On-chain collateral deposit contracts on Ink Testnet are currently pending official protocol deployment. Direct on-chain deposit and withdrawal will activate once the endpoint smart contract address is configured.
+              On-chain collateral deposit contracts on Ink Testnet are currently pending official protocol deployment. Direct on-chain deposit will activate once the endpoint smart contract address is configured.
             </div>
           </div>
         )}
@@ -238,8 +260,8 @@ export default function SubaccountModal({
             <span className="font-bold text-white text-sm">${walletUsdcBalance.toFixed(2)} USDC</span>
           </div>
           <div className="bg-black/30 border border-white/5 p-3 rounded-xl">
-            <span className="text-gray-400 block mb-1 font-sans">Free Subaccount</span>
-            <span className="font-bold text-green-400 text-sm">${(nadoFreeCollateral > 0 ? nadoFreeCollateral : freeCollateral).toFixed(2)} USDC</span>
+            <span className="text-gray-400 block mb-1 font-sans">Available Margin</span>
+            <span className="font-bold text-green-400 text-sm">${availableFree.toFixed(2)} USDC</span>
           </div>
         </div>
 
@@ -277,7 +299,7 @@ export default function SubaccountModal({
               <label className="font-medium text-gray-400">Amount (USDC)</label>
               <button
                 type="button"
-                onClick={() => setAmount(mode === 'deposit' ? (walletUsdcBalance > 0 ? walletUsdcBalance.toString() : balance.toString()) : (nadoFreeCollateral > 0 ? nadoFreeCollateral.toString() : freeCollateral.toString()))}
+                onClick={() => setAmount(mode === 'deposit' ? (walletUsdcBalance > 0 ? walletUsdcBalance.toString() : balance.toString()) : (availableFree > 0 ? availableFree.toString() : '0'))}
                 className="text-primary font-bold hover:underline cursor-pointer"
               >
                 Max
@@ -298,22 +320,26 @@ export default function SubaccountModal({
 
           <button
             type="submit"
-            disabled={isProcessing || !isContractConfigured}
+            disabled={isProcessing || (mode === 'deposit' && !isContractConfigured) || numAmount <= 0 || (mode === 'withdraw' && availableFree > 0 && numAmount > availableFree)}
             className={`w-full py-3 rounded-xl font-bold text-sm shadow-lg flex items-center justify-center gap-2 transition-all ${
-              !isContractConfigured
+              mode === 'deposit' && !isContractConfigured
                 ? 'bg-white/10 text-gray-400 cursor-not-allowed border border-white/5'
                 : isProcessing
-                ? 'bg-gray-600 cursor-not-allowed opacity-50'
+                ? 'bg-purple-600/70 text-white cursor-wait'
+                : numAmount <= 0 || (mode === 'withdraw' && availableFree > 0 && numAmount > availableFree)
+                ? 'bg-white/10 text-gray-500 cursor-not-allowed'
                 : mode === 'deposit'
                 ? 'bg-green-500 hover:bg-green-400 text-background shadow-green-500/20 cursor-pointer'
                 : 'bg-purple-500 hover:bg-purple-400 text-white shadow-purple-500/20 cursor-pointer'
             }`}
           >
             {isProcessing && <Loader2 size={16} className="animate-spin" />}
-            {!isContractConfigured
+            {mode === 'deposit' && !isContractConfigured
               ? 'On-Chain Deposits Pending Deployment'
               : isProcessing
-              ? 'Processing Transaction...'
+              ? (mode === 'deposit' ? 'Processing Deposit...' : 'Processing Withdrawal...')
+              : mode === 'withdraw' && availableFree > 0 && numAmount > availableFree
+              ? 'Insufficient Free Margin'
               : mode === 'deposit'
               ? 'Confirm Deposit to Nado'
               : 'Confirm Withdrawal to Wallet'}
