@@ -45,13 +45,15 @@ function WalletContent() {
     network, 
     transactions, 
     addTransaction,
-    refetchBalance
+    refetchBalance,
+    connect
   } = useWallet();
   const { formatCurrency, formatDate } = useLocalization();
   const { simulateTransaction } = useTransactionFeedback();
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw' | 'transfer'>('deposit');
   const [amount, setAmount] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedProductId, setSelectedProductId] = useState<number>(5);
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
@@ -59,19 +61,6 @@ function WalletContent() {
       setActiveTab(tabParam);
     }
   }, [searchParams]);
-  
-  if (!isConnected) {
-    return (
-      <div className="min-h-screen text-foreground font-sans flex flex-col pb-20 relative">
-        <Navbar />
-        <main className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-          <ShieldCheck size={64} className="text-gray-500 mb-4 opacity-50" />
-          <h2 className="text-2xl font-bold mb-2">Wallet Disconnected</h2>
-          <p className="text-gray-400 max-w-md mb-6">Please connect your wallet using the button in the top right corner to view your assets and transaction history.</p>
-        </main>
-      </div>
-    );
-  }
 
   // Pure Nado free collateral available to withdraw, fallback to collateral or balance
   const availableToWithdraw = nadoFreeCollateral > 0 
@@ -83,6 +72,11 @@ function WalletContent() {
     : availableToWithdraw;
 
   const handleAction = async () => {
+    if (!isConnected) {
+      connect();
+      return;
+    }
+
     const numAmount = parseFloat(amount);
     if (!numAmount || numAmount <= 0) {
       alert("Please enter a valid amount!");
@@ -107,7 +101,7 @@ function WalletContent() {
       }
 
       const providerSource = typeof window !== 'undefined' ? (window as any).ethereum : null;
-      if (!providerSource) throw new Error('No Web3 wallet provider available.');
+      if (!providerSource) throw new Error('No Web3 wallet provider available. Please connect MetaMask or an injected wallet.');
 
       const { ethers } = await import('ethers');
       const provider = new ethers.BrowserProvider(providerSource);
@@ -174,14 +168,38 @@ function WalletContent() {
         const { withdrawCollateral } = await import('@/nado/nadoApi');
         const sender = await signer.getAddress();
         const amountX18 = ethers.parseUnits(numAmount.toFixed(18), 18).toString();
+
+        const primaryPid = selectedProductId ?? (
+          nadoSpotAssets.find(a => a.productId === 5 && a.amount > 0) ? 5 :
+          nadoSpotAssets.find(a => a.productId === 0 && a.amount > 0) ? 0 : 5
+        );
+
+        let withdrawalSent = false;
+        let lastErr: any = null;
+
         try {
-          await withdrawCollateral(0, amountX18, sender, signer);
-        } catch (apiErr: any) {
-          console.warn('[Withdraw] Sequencer execution note:', apiErr);
-          if (apiErr.message?.includes('no previous deposits') || apiErr.message?.includes('insufficient')) {
+          await withdrawCollateral(primaryPid, amountX18, sender, signer);
+          withdrawalSent = true;
+        } catch (err1: any) {
+          lastErr = err1;
+          console.warn(`[Withdraw] Product ${primaryPid} note:`, err1);
+          if (primaryPid === 5 || primaryPid === 0) {
+            const altPid = primaryPid === 5 ? 0 : 5;
+            try {
+              await withdrawCollateral(altPid, amountX18, sender, signer);
+              withdrawalSent = true;
+            } catch (err2: any) {
+              lastErr = err2;
+              console.warn(`[Withdraw] Alternate Product ${altPid} note:`, err2);
+            }
+          }
+        }
+
+        if (!withdrawalSent && lastErr) {
+          if (lastErr.message?.includes('no previous deposits') || lastErr.message?.includes('insufficient')) {
             console.info('Processed local margin withdrawal.');
           } else {
-            throw apiErr;
+            throw lastErr;
           }
         }
       }
@@ -191,11 +209,11 @@ function WalletContent() {
       addTransaction({
         type: activeTab === 'deposit' ? 'Deposit' : 'Withdraw',
         amount: numAmount,
-        asset: 'USDC',
+        asset: selectedProductId === 0 ? 'USD₮0' : 'USDC',
         network: network,
       });
       
-      alert(`${activeTab === 'deposit' ? 'Deposit' : 'Withdraw'} of $${numAmount.toFixed(2)} USDC confirmed!`);
+      alert(`${activeTab === 'deposit' ? 'Deposit' : 'Withdraw'} of $${numAmount.toFixed(2)} ${selectedProductId === 0 ? 'USD₮0' : 'USDC'} confirmed!`);
       setAmount('');
     } catch (e: any) {
       console.error(e);
@@ -211,6 +229,24 @@ function WalletContent() {
 
       <main className="flex-1 flex flex-col p-6 md:p-12 relative max-w-7xl mx-auto w-full">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[800px] bg-primary/10 rounded-full blur-[150px] -z-10 mix-blend-screen pointer-events-none" />
+
+        {!isConnected && (
+          <div className="mb-8 p-4 rounded-2xl bg-primary/10 border border-primary/30 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-lg shadow-primary/5">
+            <div className="flex items-center gap-3">
+              <ShieldCheck className="text-primary shrink-0" size={28} />
+              <div>
+                <h4 className="font-bold text-sm text-white">Wallet Not Connected</h4>
+                <p className="text-xs text-gray-400">Connect your Web3 wallet to manage deposits, view real-time margin, and execute withdrawals.</p>
+              </div>
+            </div>
+            <button
+              onClick={() => connect()}
+              className="px-5 py-2.5 bg-primary hover:bg-primary/90 text-background font-bold text-xs rounded-xl transition-all shadow-lg shadow-primary/20 shrink-0 cursor-pointer"
+            >
+              Connect Wallet
+            </button>
+          </div>
+        )}
 
         {/* Page Header */}
         <div className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
@@ -408,8 +444,12 @@ function WalletContent() {
                             Deposit
                           </button>
                           <button
-                            onClick={() => { setActiveTab('withdraw'); setAmount(Math.min(asset.amount, availableToWithdraw).toFixed(2)); }}
-                            className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white text-xs font-bold transition-colors"
+                            onClick={() => { 
+                              setActiveTab('withdraw'); 
+                              setSelectedProductId(asset.productId);
+                              setAmount(Math.min(asset.amount, availableToWithdraw).toFixed(2)); 
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white text-xs font-bold transition-colors cursor-pointer"
                           >
                             Withdraw
                           </button>
@@ -509,15 +549,33 @@ function WalletContent() {
 
             <div className="space-y-4">
               <div className="bg-black/40 border border-white/5 rounded-2xl p-4 focus-within:border-primary/50 transition-colors">
-                <div className="text-sm text-gray-400 mb-2 font-medium">Asset</div>
+                <div className="text-sm text-gray-400 mb-2 font-medium flex items-center justify-between">
+                  <span>Asset</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedProductId(5)}
+                      className={`text-xs px-2 py-0.5 rounded font-bold transition-colors cursor-pointer ${selectedProductId === 5 ? 'bg-primary/20 text-primary border border-primary/30' : 'text-gray-400 hover:text-white'}`}
+                    >
+                      USDC (Prod 5)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedProductId(0)}
+                      className={`text-xs px-2 py-0.5 rounded font-bold transition-colors cursor-pointer ${selectedProductId === 0 ? 'bg-primary/20 text-primary border border-primary/30' : 'text-gray-400 hover:text-white'}`}
+                    >
+                      USD₮0 (Prod 0)
+                    </button>
+                  </div>
+                </div>
                 <div className="flex items-center gap-2 glass-panel w-full px-4 py-3 rounded-xl justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-7 h-7 rounded-full bg-blue-500 shadow-lg shadow-blue-500/20 flex items-center justify-center text-white text-xs font-bold">
+                    <div className={`w-7 h-7 rounded-full ${selectedProductId === 0 ? 'bg-emerald-500 shadow-emerald-500/20' : 'bg-blue-500 shadow-blue-500/20'} shadow-lg flex items-center justify-center text-white text-xs font-bold`}>
                       $
                     </div>
                     <div>
-                      <span className="font-bold text-lg text-white">USDC</span>
-                      <span className="text-xs text-gray-400 block">USD Coin (Nado Primary Settlement)</span>
+                      <span className="font-bold text-lg text-white">{selectedProductId === 0 ? 'USD₮0' : 'USDC'}</span>
+                      <span className="text-xs text-gray-400 block">{selectedProductId === 0 ? 'Tether USD (Nado Product 0)' : 'Native USD Coin (Nado Product 5)'}</span>
                     </div>
                   </div>
                 </div>
@@ -575,15 +633,20 @@ function WalletContent() {
 
               <button 
                 onClick={handleAction}
-                disabled={isSubmitting || !amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && availableToWithdraw > 0 && parseFloat(amount) > availableToWithdraw)}
+                disabled={isConnected && (isSubmitting || !amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && availableToWithdraw > 0 && parseFloat(amount) > availableToWithdraw))}
                 className={`w-full py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${
-                  isSubmitting ? 'bg-primary/50 text-white cursor-wait' :
-                  (!amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && availableToWithdraw > 0 && parseFloat(amount) > availableToWithdraw)) 
+                  !isConnected
+                    ? 'bg-primary text-background hover:bg-primary/90 shadow-[0_0_15px_rgba(0,240,255,0.4)] cursor-pointer'
+                    : isSubmitting
+                    ? 'bg-primary/50 text-white cursor-wait'
+                    : (!amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && availableToWithdraw > 0 && parseFloat(amount) > availableToWithdraw)) 
                     ? 'bg-white/10 text-gray-500 cursor-not-allowed' 
                     : 'bg-primary text-background hover:bg-primary/90 shadow-[0_0_15px_rgba(0,240,255,0.4)] cursor-pointer'
                 }`}
               >
-                {isSubmitting ? (
+                {!isConnected ? (
+                  `Connect Wallet to ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`
+                ) : isSubmitting ? (
                   <><Loader2 className="animate-spin" /> Processing {activeTab === 'withdraw' ? 'Withdrawal' : 'Transaction'}...</>
                 ) : activeTab === 'withdraw' && availableToWithdraw > 0 && parseFloat(amount) > availableToWithdraw ? (
                   'Insufficient Free Margin'
