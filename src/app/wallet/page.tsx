@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import React, { useState, useEffect } from 'react';
 import { useWallet } from '@/components/WalletContext';
 import { useLocalization } from '@/components/LocalizationContext';
 import { useTransactionFeedback } from '@/components/TransactionFeedbackContext';
@@ -26,9 +25,9 @@ import {
 import Link from 'next/link';
 
 function WalletContent() {
-  const searchParams = useSearchParams();
   const { 
     isConnected, 
+    walletProvider,
     balance, 
     nadoBalance, 
     nadoCollateral, 
@@ -56,11 +55,14 @@ function WalletContent() {
   const [selectedProductId, setSelectedProductId] = useState<number>(5);
 
   useEffect(() => {
-    const tabParam = searchParams.get('tab');
-    if (tabParam === 'withdraw' || tabParam === 'deposit' || tabParam === 'transfer') {
-      setActiveTab(tabParam);
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      if (tabParam === 'withdraw' || tabParam === 'deposit' || tabParam === 'transfer') {
+        setActiveTab(tabParam as 'deposit' | 'withdraw' | 'transfer');
+      }
     }
-  }, [searchParams]);
+  }, []);
 
   // Pure Nado free collateral available to withdraw, fallback to collateral or balance
   const availableToWithdraw = nadoFreeCollateral > 0 
@@ -100,8 +102,8 @@ function WalletContent() {
         return;
       }
 
-      const providerSource = typeof window !== 'undefined' ? (window as any).ethereum : null;
-      if (!providerSource) throw new Error('No Web3 wallet provider available. Please connect MetaMask or an injected wallet.');
+      const providerSource = walletProvider || (typeof window !== 'undefined' ? (window as any).ethereum : null);
+      if (!providerSource) throw new Error('No Web3 wallet provider available. Please connect your wallet.');
 
       const { ethers } = await import('ethers');
       const provider = new ethers.BrowserProvider(providerSource);
@@ -699,7 +701,7 @@ function WalletContent() {
                           {tx.amount > 0 ? '+' : ''}{formatCurrency(tx.amount)} {tx.asset}
                         </td>
                         <td className="py-4 px-6 text-gray-400 text-xs">
-                          {formatDate(tx.date)}
+                          {tx.date ? formatDate(tx.date) : 'Recently'}
                         </td>
                         <td className="py-4 px-6">
                           <span className="text-xs bg-white/5 px-2 py-1 rounded border border-white/10">{tx.network}</span>
@@ -724,16 +726,5 @@ function WalletContent() {
 }
 
 export default function WalletPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-background text-foreground flex items-center justify-center font-sans">
-          <Loader2 className="animate-spin text-primary mr-2" size={24} />
-          <span className="text-sm text-gray-400">Loading Wallet...</span>
-        </div>
-      }
-    >
-      <WalletContent />
-    </Suspense>
-  );
+  return <WalletContent />;
 }

@@ -36,7 +36,7 @@ interface LocalizationState {
   setOneClickTrading: (enabled: boolean) => void;
   setNotifications: (settings: NotificationsState) => void;
   formatCurrency: (amount: number) => string;
-  formatDate: (date: Date) => string;
+  formatDate: (date: Date | string | number) => string;
   getRegionalTrending: () => { asset: string; change: number }[];
 }
 
@@ -201,11 +201,18 @@ export function LocalizationProvider({ children }: { children: ReactNode }) {
     }).format(amount);
   };
 
-  const formatDate = (date: Date) => {
-    return new Intl.DateTimeFormat(language === 'en' ? 'en-US' : language === 'fr' ? 'fr-FR' : 'es-ES', {
-      year: 'numeric', month: 'short', day: 'numeric',
-      hour: '2-digit', minute: '2-digit'
-    }).format(date);
+  const formatDate = (date: Date | string | number) => {
+    try {
+      if (!date) return 'Recently';
+      const d = date instanceof Date ? date : new Date(date);
+      if (isNaN(d.getTime())) return 'Recently';
+      return new Intl.DateTimeFormat(language === 'en' ? 'en-US' : language === 'fr' ? 'fr-FR' : 'es-ES', {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+      }).format(d);
+    } catch {
+      return 'Recently';
+    }
   };
 
   const getRegionalTrending = () => {

@@ -67,6 +67,7 @@ export interface WalletState {
   addTransaction: (tx: Omit<Transaction, 'id' | 'date' | 'status'>) => void;
   updateStakedBalance: (poolId: string, amount: number) => void;
   updateTokenBalance: (tokenId: string, amount: number) => void;
+  walletProvider: any;
 }
 
 const initialTransactions: Transaction[] = [];
@@ -151,7 +152,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       const savedTx = localStorage.getItem('wallet_transactions');
       if (savedTx) {
         try {
-          setTransactions(JSON.parse(savedTx));
+          const parsed = JSON.parse(savedTx);
+          if (Array.isArray(parsed)) {
+            setTransactions(parsed.map((t: any) => ({
+              ...t,
+              date: t.date ? new Date(t.date) : new Date(),
+            })));
+          }
         } catch {}
       }
 
@@ -599,6 +606,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         addTransaction,
         updateStakedBalance,
         updateTokenBalance,
+        walletProvider: appKitProvider || (typeof window !== 'undefined' ? (window as any).ethereum : null),
       }}
     >
       {children}

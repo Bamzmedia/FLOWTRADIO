@@ -21,7 +21,7 @@ export default function SubaccountModal({
   freeCollateral = 0,
   onSuccess,
 }: SubaccountModalProps) {
-  const { isConnected, balance, walletUsdcBalance, nadoFreeCollateral, refetchBalance, addTransaction, network } = useWallet();
+  const { isConnected, walletProvider, balance, walletUsdcBalance, nadoFreeCollateral, refetchBalance, addTransaction, network } = useWallet();
   const [mode, setMode] = useState<'deposit' | 'withdraw'>('deposit');
   const [amount, setAmount] = useState<string>('');
   const [subaccountName, setSubaccountName] = useState<string>('default');
@@ -81,7 +81,7 @@ export default function SubaccountModal({
     setFeedback(null);
 
     try {
-      const providerSource = typeof window !== 'undefined' ? (window as any).ethereum : null;
+      const providerSource = walletProvider || (typeof window !== 'undefined' ? (window as any).ethereum : null);
       if (!providerSource) throw new Error('No Web3 wallet provider available.');
 
       const provider = new ethers.BrowserProvider(providerSource);
