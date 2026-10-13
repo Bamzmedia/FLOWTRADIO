@@ -64,10 +64,10 @@ function WalletContent() {
     }
   }, []);
 
-  // Pure Nado free collateral available to withdraw, fallback to collateral or balance
+  // Pure live Nado free collateral available to withdraw (strictly 0 if nothing deposited)
   const availableToWithdraw = nadoFreeCollateral > 0 
     ? nadoFreeCollateral 
-    : (nadoCollateral > 0 ? nadoCollateral : balance);
+    : (nadoCollateral > 0 ? nadoCollateral : 0);
   
   const activeAvailable = activeTab === 'deposit' 
     ? walletUsdcBalance 
@@ -84,13 +84,25 @@ function WalletContent() {
       alert("Please enter a valid amount!");
       return;
     }
-    if (activeTab === 'withdraw' && availableToWithdraw > 0 && numAmount > availableToWithdraw) {
-      alert("Insufficient free margin for withdrawal!");
-      return;
+    if (activeTab === 'withdraw') {
+      if (availableToWithdraw <= 0) {
+        alert("No deposited collateral on Nado DEX to withdraw. Please deposit USDC/USD₮0 on Ink first before withdrawing.");
+        return;
+      }
+      if (numAmount > availableToWithdraw) {
+        alert("Insufficient free margin on Nado DEX for withdrawal!");
+        return;
+      }
     }
-    if (activeTab === 'deposit' && walletUsdcBalance > 0 && numAmount > walletUsdcBalance) {
-      alert("Insufficient USDC in MetaMask wallet for deposit!");
-      return;
+    if (activeTab === 'deposit') {
+      if (walletUsdcBalance <= 0) {
+        alert("No USDC or USD₮0 found in your connected MetaMask wallet on Ink. Please fund your wallet on Ink first.");
+        return;
+      }
+      if (numAmount > walletUsdcBalance) {
+        alert("Insufficient USDC in MetaMask wallet for deposit!");
+        return;
+      }
     }
     
     setIsSubmitting(true);
@@ -204,14 +216,11 @@ function WalletContent() {
           const errMsg = (lastErr.message || '').toLowerCase();
           if (
             errMsg.includes('no previous deposits') ||
-            errMsg.includes('prior deposits') ||
-            errMsg.includes('insufficient') ||
-            errMsg.includes('not enough')
+            errMsg.includes('prior deposits')
           ) {
-            console.info('Processed local margin withdrawal.');
-          } else {
-            throw lastErr;
+            throw new Error('Nado DEX Sequencer rejected withdrawal: The provided address has no previous deposits on Nado. You must deposit funds into Nado before you can withdraw.');
           }
+          throw lastErr;
         }
       }
 
@@ -636,21 +645,38 @@ function WalletContent() {
               </div>
 
               {activeTab === 'withdraw' && (
-                <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-xs">
-                  <AlertCircle size={14} className="shrink-0 mt-0.5" />
-                  <p>Withdrawals from Nado are processed through the off-chain sequencer and settled directly to your connected wallet.</p>
+                <div className="space-y-3">
+                  <div className="flex items-start gap-2 p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-300 text-xs">
+                    <AlertCircle size={14} className="shrink-0 mt-0.5 text-blue-400" />
+                    <p>Withdrawals release your deposited trading margin from Nado back to your connected MetaMask wallet.</p>
+                  </div>
+                  {availableToWithdraw <= 0 && (
+                    <div className="flex items-start gap-2.5 p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-xs">
+                      <AlertCircle size={15} className="shrink-0 mt-0.5 text-amber-400" />
+                      <div>
+                        <span className="font-bold block text-amber-200">No Collateral Deposited on Nado</span>
+                        Your Nado DEX free margin is currently $0.00. You must have deposited collateral on Nado to perform a withdrawal. If you have funds in MetaMask, use the <strong>Deposit</strong> tab to fund your account.
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
               <button 
                 onClick={handleAction}
-                disabled={isConnected && (isSubmitting || !amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && availableToWithdraw > 0 && parseFloat(amount) > availableToWithdraw))}
+                disabled={isConnected && (
+                  isSubmitting || 
+                  !amount || 
+                  parseFloat(amount) <= 0 || 
+                  (activeTab === 'withdraw' && (availableToWithdraw <= 0 || parseFloat(amount) > availableToWithdraw)) ||
+                  (activeTab === 'deposit' && (walletUsdcBalance <= 0 || parseFloat(amount) > walletUsdcBalance))
+                )}
                 className={`w-full py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${
                   !isConnected
                     ? 'bg-primary text-background hover:bg-primary/90 shadow-[0_0_15px_rgba(0,240,255,0.4)] cursor-pointer'
                     : isSubmitting
                     ? 'bg-primary/50 text-white cursor-wait'
-                    : (!amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && availableToWithdraw > 0 && parseFloat(amount) > availableToWithdraw)) 
+                    : (!amount || parseFloat(amount) <= 0 || (activeTab === 'withdraw' && (availableToWithdraw <= 0 || parseFloat(amount) > availableToWithdraw)) || (activeTab === 'deposit' && (walletUsdcBalance <= 0 || parseFloat(amount) > walletUsdcBalance))) 
                     ? 'bg-white/10 text-gray-500 cursor-not-allowed' 
                     : 'bg-primary text-background hover:bg-primary/90 shadow-[0_0_15px_rgba(0,240,255,0.4)] cursor-pointer'
                 }`}
@@ -659,8 +685,12 @@ function WalletContent() {
                   `Connect Wallet to ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`
                 ) : isSubmitting ? (
                   <><Loader2 className="animate-spin" /> Processing {activeTab === 'withdraw' ? 'Withdrawal' : 'Transaction'}...</>
-                ) : activeTab === 'withdraw' && availableToWithdraw > 0 && parseFloat(amount) > availableToWithdraw ? (
+                ) : activeTab === 'withdraw' && availableToWithdraw <= 0 ? (
+                  'No Deposited Margin to Withdraw'
+                ) : activeTab === 'withdraw' && parseFloat(amount) > availableToWithdraw ? (
                   'Insufficient Free Margin'
+                ) : activeTab === 'deposit' && walletUsdcBalance <= 0 ? (
+                  'No USDC in Wallet to Deposit'
                 ) : (
                   `Confirm ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`
                 )}

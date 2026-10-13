@@ -41,7 +41,7 @@ export default function SubaccountModal({
   const numAmount = parseFloat(amount) || 0;
   const availableFree = nadoFreeCollateral > 0 
     ? nadoFreeCollateral 
-    : (freeCollateral > 0 ? freeCollateral : (subaccountCollateral > 0 ? subaccountCollateral : balance));
+    : (freeCollateral > 0 ? freeCollateral : (subaccountCollateral > 0 ? subaccountCollateral : 0));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,6 +56,14 @@ export default function SubaccountModal({
       setFeedback({
         type: 'info',
         msg: 'On-chain testnet collateral contract deployment is pending. Direct on-chain settlement will activate once the endpoint contract is deployed on Ink Testnet.',
+      });
+      return;
+    }
+
+    if (mode === 'withdraw' && availableFree <= 0) {
+      setFeedback({
+        type: 'error',
+        msg: 'No available margin on Nado DEX to withdraw. Please deposit collateral first.',
       });
       return;
     }
@@ -177,14 +185,11 @@ export default function SubaccountModal({
           const errMsg = (lastErr.message || '').toLowerCase();
           if (
             errMsg.includes('no previous deposits') ||
-            errMsg.includes('prior deposits') ||
-            errMsg.includes('insufficient') ||
-            errMsg.includes('not enough')
+            errMsg.includes('prior deposits')
           ) {
-            console.info('Processed local margin withdrawal.');
-          } else {
-            throw lastErr;
+            throw new Error('Nado Sequencer rejected withdrawal: Your address has no previous deposits on Nado. Please deposit funds first.');
           }
+          throw lastErr;
         }
 
         setFeedback({
@@ -339,13 +344,13 @@ export default function SubaccountModal({
 
           <button
             type="submit"
-            disabled={isProcessing || (mode === 'deposit' && !isContractConfigured) || numAmount <= 0 || (mode === 'withdraw' && availableFree > 0 && numAmount > availableFree)}
+            disabled={isProcessing || (mode === 'deposit' && !isContractConfigured) || numAmount <= 0 || (mode === 'withdraw' && (availableFree <= 0 || numAmount > availableFree))}
             className={`w-full py-3 rounded-xl font-bold text-sm shadow-lg flex items-center justify-center gap-2 transition-all ${
               mode === 'deposit' && !isContractConfigured
                 ? 'bg-white/10 text-gray-400 cursor-not-allowed border border-white/5'
                 : isProcessing
                 ? 'bg-purple-600/70 text-white cursor-wait'
-                : numAmount <= 0 || (mode === 'withdraw' && availableFree > 0 && numAmount > availableFree)
+                : numAmount <= 0 || (mode === 'withdraw' && (availableFree <= 0 || numAmount > availableFree))
                 ? 'bg-white/10 text-gray-500 cursor-not-allowed'
                 : mode === 'deposit'
                 ? 'bg-green-500 hover:bg-green-400 text-background shadow-green-500/20 cursor-pointer'
@@ -357,7 +362,9 @@ export default function SubaccountModal({
               ? 'On-Chain Deposits Pending Deployment'
               : isProcessing
               ? (mode === 'deposit' ? 'Processing Deposit...' : 'Processing Withdrawal...')
-              : mode === 'withdraw' && availableFree > 0 && numAmount > availableFree
+              : mode === 'withdraw' && availableFree <= 0
+              ? 'No Deposited Margin to Withdraw'
+              : mode === 'withdraw' && numAmount > availableFree
               ? 'Insufficient Free Margin'
               : mode === 'deposit'
               ? 'Confirm Deposit to Nado'
