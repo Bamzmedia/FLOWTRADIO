@@ -81,7 +81,7 @@ const MARKETS: MarketConfig[] = [
 
 function TradeContent() {
   const { t, formatCurrency } = useLocalization();
-  const { isConnected, balance, isBalanceLoading, balanceError, addTransaction, address: walletContextAddress, connect } = useWallet();
+  const { isConnected, balance, nadoFreeCollateral, isBalanceLoading, balanceError, addTransaction, address: walletContextAddress, connect } = useWallet();
   const { startTransaction, updateTransaction, dismissTransaction, simulateTransaction } = useTransactionFeedback();
   const { address: appKitAddress } = useAppKitAccount();
   const { walletProvider } = useAppKitProvider('eip155');
@@ -153,6 +153,12 @@ function TradeContent() {
     addOptimisticPosition,
     updateOptimisticSubaccount,
   } = useNadoUserStream();
+
+  // Truthful live available margin on Nado DEX (strictly 0 if nothing deposited)
+  const liveAvailableTrading =
+    subaccountInfo && typeof subaccountInfo.freeCollateral === 'number'
+      ? subaccountInfo.freeCollateral
+      : (nadoFreeCollateral > 0 ? nadoFreeCollateral : 0);
   
   // Limit Order Price State
   const [limitPrice, setLimitPrice] = useState<string>('');
@@ -579,17 +585,23 @@ function TradeContent() {
       return;
     }
 
-    const effectiveTradingBalance =
-      subaccountInfo && typeof subaccountInfo.freeCollateral === 'number'
-        ? subaccountInfo.freeCollateral
-        : (isConnected ? balance : 0);
+    if (liveAvailableTrading <= 0) {
+      pushToast({
+        id: Date.now().toString(),
+        type: 'error',
+        title: 'No Collateral Deposited ($0.00)',
+        message: 'Your Nado DEX subaccount has $0.00 margin. Please deposit USDC on Ink before placing leveraged trades.',
+      });
+      setShowSubaccountModal(true);
+      return;
+    }
 
-    if (numPayAmount > effectiveTradingBalance) {
+    if (numPayAmount > liveAvailableTrading) {
       pushToast({
         id: Date.now().toString(),
         type: 'error',
         title: 'Insufficient Balance',
-        message: `Your available trading balance ($${effectiveTradingBalance.toFixed(2)}) is insufficient for this trade ($${numPayAmount.toFixed(2)}).`,
+        message: `Your available trading balance ($${liveAvailableTrading.toFixed(2)}) is insufficient for this trade ($${numPayAmount.toFixed(2)}).`,
       });
       return;
     }
@@ -876,7 +888,21 @@ function TradeContent() {
       }
     } catch (err: any) {
       console.error('[OrderExecution] Execution error:', err);
-      updateTransaction(txId, { status: 'error', errorMessage: err.message || 'Off-chain matching engine rejected order payload.' });
+      let errMsg = err.message || 'Off-chain matching engine rejected order payload.';
+      if (
+        errMsg.toLowerCase().includes('subaccount health insufficient') ||
+        errMsg.toLowerCase().includes('health level') ||
+        errMsg.toLowerCase().includes('no previous deposits')
+      ) {
+        errMsg = 'Subaccount health insufficient: Your Nado DEX subaccount has $0.00 deposited collateral. Please deposit USDC on Ink to trade.';
+      }
+      updateTransaction(txId, { status: 'error', errorMessage: errMsg });
+      pushToast({
+        id: Date.now().toString(),
+        type: 'error',
+        title: 'Insufficient Subaccount Health',
+        message: 'Your Nado DEX subaccount has $0.00 margin. Please deposit USDC or USD₮0 on Ink to increase account health.',
+      });
     } finally {
       isSubmittingRef.current = false;
       setIsSubmitting(false);
@@ -1664,7 +1690,7 @@ function TradeContent() {
                     <div className="flex items-center gap-1.5 text-xs">
                       <span className="text-gray-400">Available:</span>
                       <span className="font-bold text-green-400 font-mono">
-                        ${(subaccountInfo && typeof subaccountInfo.freeCollateral === 'number' ? subaccountInfo.freeCollateral : (isConnected ? balance : 0)).toFixed(2)}
+                        ${liveAvailableTrading.toFixed(2)}
                       </span>
                       {subaccountInfo && subaccountInfo.marginUsage > 0 && (
                         <span className="text-[10px] text-yellow-400/90 font-mono" title="Margin locked in active positions">
@@ -1695,7 +1721,7 @@ function TradeContent() {
                       key={pct}
                       type="button"
                       onClick={() => {
-                        const avail = subaccountInfo && typeof subaccountInfo.freeCollateral === 'number' ? subaccountInfo.freeCollateral : (isConnected ? balance : 0);
+                        const avail = liveAvailableTrading;
                         const calculated = Math.max(0, avail * pct);
                         setPayAmount(calculated > 0 ? (pct === 1.0 ? calculated.toFixed(2) : calculated.toFixed(2)) : '');
                       }}
@@ -1845,6 +1871,19 @@ function TradeContent() {
               >
                 Connect Wallet to Trade
               </button>
+            ) : liveAvailableTrading <= 0 ? (
+              <div className="flex flex-col gap-2 mt-5">
+                <button
+                  type="button"
+                  onClick={() => setShowSubaccountModal(true)}
+                  className="w-full font-bold py-3.5 rounded-xl transition-all duration-300 bg-primary hover:bg-primary/90 text-background shadow-[0_0_20px_rgba(0,240,255,0.4)] flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
+                >
+                  Deposit Margin to Trade ($0.00 Available)
+                </button>
+                <p className="text-[11px] text-center text-gray-400">
+                  Nado DEX requires deposited USDC or USD₮0 collateral to open leveraged positions.
+                </p>
+              </div>
             ) : (
               <div className="flex flex-col gap-2 mt-5">
                 <div className="grid grid-cols-2 gap-3">
