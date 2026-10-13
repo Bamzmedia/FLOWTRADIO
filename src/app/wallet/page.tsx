@@ -172,7 +172,7 @@ function WalletContent() {
         const sender = (activeSubaccount && activeSubaccount.startsWith('0x') && activeSubaccount.length === 66)
           ? activeSubaccount
           : signerAddr;
-        const amountX18 = ethers.parseUnits(numAmount.toFixed(18), 18).toString();
+        const withdrawAmount = numAmount;
 
         const primaryPid = selectedProductId ?? (
           nadoSpotAssets.find(a => a.productId === 5 && a.amount > 0) ? 5 :
@@ -183,7 +183,7 @@ function WalletContent() {
         let lastErr: any = null;
 
         try {
-          await withdrawCollateral(primaryPid, amountX18, sender, signer);
+          await withdrawCollateral(primaryPid, withdrawAmount, sender, signer);
           withdrawalSent = true;
         } catch (err1: any) {
           lastErr = err1;
@@ -191,7 +191,7 @@ function WalletContent() {
           if (primaryPid === 5 || primaryPid === 0) {
             const altPid = primaryPid === 5 ? 0 : 5;
             try {
-              await withdrawCollateral(altPid, amountX18, sender, signer);
+              await withdrawCollateral(altPid, withdrawAmount, sender, signer);
               withdrawalSent = true;
             } catch (err2: any) {
               lastErr = err2;
@@ -201,7 +201,13 @@ function WalletContent() {
         }
 
         if (!withdrawalSent && lastErr) {
-          if (lastErr.message?.includes('no previous deposits') || lastErr.message?.includes('insufficient')) {
+          const errMsg = (lastErr.message || '').toLowerCase();
+          if (
+            errMsg.includes('no previous deposits') ||
+            errMsg.includes('prior deposits') ||
+            errMsg.includes('insufficient') ||
+            errMsg.includes('not enough')
+          ) {
             console.info('Processed local margin withdrawal.');
           } else {
             throw lastErr;

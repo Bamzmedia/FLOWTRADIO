@@ -1103,22 +1103,101 @@ export async function cancelNadoOrder(
   return await executeNadoAction(payload);
 }
 
+export const PRODUCT_DECIMALS: Record<number, number> = {
+  0: 6, // USDT0
+  1: 8, // KBTC
+  3: 18, // WETH
+  5: 6, // USDC
+  11: 6, // USD+
+};
+
+/**
+ * Queries the Nado sequencer for an address's current tx_nonce and order_nonce.
+ */
+export async function getNadoNonces(address: string): Promise<{ txNonce: string; orderNonce: string }> {
+  try {
+    const { gateway } = getNadoEndpoints();
+    const cleanAddr = address.toLowerCase();
+    const res = await fetch(`${gateway}/query`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept-Encoding': 'gzip, br, deflate',
+      },
+      body: JSON.stringify({
+        type: 'nonces',
+        address: cleanAddr,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.status === 'success' && data?.data) {
+        return {
+          txNonce: String(data.data.tx_nonce ?? '0'),
+          orderNonce: String(data.data.order_nonce ?? '0'),
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[NadoAPI] Failed to query nonces from sequencer:', err);
+  }
+  return { txNonce: '0', orderNonce: getOrderNonce() };
+}
+
+/**
+ * Gets the current sequential tx_nonce for an address from the Nado sequencer.
+ * Required for state-changing execute actions (withdraw_collateral, mint_lp, burn_lp, transfer_quote).
+ */
+export async function getTxNonce(address: string): Promise<string> {
+  const nonces = await getNadoNonces(address);
+  return nonces.txNonce;
+}
+
 /**
  * Request off-chain withdrawal of collateral from Nado Sequencer via EIP-712 signature.
  */
 export async function withdrawCollateral(
   productId: number,
-  amountX18: string,
+  amount: string | number,
   sender: string,
   signer: any,
   subaccountName: string = 'default'
 ): Promise<any> {
-  const nonce = getOrderNonce();
-  const chainId = parseInt(process.env.NEXT_PUBLIC_NADO_CHAIN_ID || '57073', 10);
-  const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT || '0x05ec92D78ED421f3D3Ada77FFdE167106565974E';
+  let signerAddress = '';
+  try {
+    signerAddress = await signer.getAddress();
+  } catch {}
+
   const senderBytes32 = sender.length === 66 && sender.startsWith('0x')
     ? sender.toLowerCase()
-    : getSubaccountHex(sender, subaccountName);
+    : getSubaccountHex(sender || signerAddress, subaccountName);
+
+  // Address used to query nonces from the engine
+  const ownerAddress = sender.length === 66 && sender.startsWith('0x')
+    ? '0x' + sender.slice(2, 42).toLowerCase()
+    : (signerAddress || sender).toLowerCase();
+
+  // Query actual sequential tx_nonce from sequencer
+  const txNonce = await getTxNonce(ownerAddress);
+
+  // Format amount according to product token decimals (6 decimals for USDT0 / USDC)
+  const decimals = PRODUCT_DECIMALS[productId] ?? 6;
+  let rawAmountStr: string;
+  const str = String(amount).trim();
+
+  if (str.includes('.')) {
+    const [intPart, fracPart = ''] = str.split('.');
+    const paddedFrac = fracPart.padEnd(decimals, '0').slice(0, decimals);
+    rawAmountStr = (intPart + paddedFrac).replace(/^0+/, '') || '0';
+  } else if (decimals === 6 && str.length > 12 && str.endsWith('000000000000')) {
+    // If scaled to 18 decimals by caller, unscale back to 6 decimals
+    rawAmountStr = str.slice(0, str.length - 12);
+  } else {
+    rawAmountStr = str;
+  }
+
+  const chainId = parseInt(process.env.NEXT_PUBLIC_NADO_CHAIN_ID || '57073', 10);
+  const endpointContract = process.env.NEXT_PUBLIC_NADO_ENDPOINT_CONTRACT || '0x05ec92D78ED421f3D3Ada77FFdE167106565974E';
 
   const domain: {
     name: string;
@@ -1147,8 +1226,8 @@ export async function withdrawCollateral(
   const value = {
     sender: senderBytes32,
     productId,
-    amount: BigInt(amountX18),
-    nonce: BigInt(nonce),
+    amount: BigInt(rawAmountStr),
+    nonce: BigInt(txNonce),
   };
 
   const signature = await signer.signTypedData(domain, types, value);
@@ -1158,12 +1237,14 @@ export async function withdrawCollateral(
       tx: {
         sender: senderBytes32,
         productId,
-        amount: amountX18,
-        nonce,
+        amount: rawAmountStr,
+        nonce: txNonce,
       },
       signature,
+      spot_leverage: null,
     },
   };
 
   return await executeNadoAction(payload);
 }
+

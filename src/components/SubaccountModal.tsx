@@ -153,19 +153,19 @@ export default function SubaccountModal({
         // Off-chain withdrawal via sequencer
         setFeedback({ type: 'info', msg: 'Signing withdrawal request...' });
         const sender = await signer.getAddress();
-        const amountX18 = ethers.parseUnits(numAmount.toFixed(18), 18).toString();
+        const withdrawAmount = numAmount;
         
         let withdrawalSent = false;
         let lastErr: any = null;
 
         try {
-          await withdrawCollateral(5, amountX18, sender, signer, subaccountName || 'default');
+          await withdrawCollateral(5, withdrawAmount, sender, signer, subaccountName || 'default');
           withdrawalSent = true;
         } catch (err1: any) {
           lastErr = err1;
           console.warn('[Withdraw] Product 5 note:', err1);
           try {
-            await withdrawCollateral(0, amountX18, sender, signer, subaccountName || 'default');
+            await withdrawCollateral(0, withdrawAmount, sender, signer, subaccountName || 'default');
             withdrawalSent = true;
           } catch (err2: any) {
             lastErr = err2;
@@ -174,7 +174,13 @@ export default function SubaccountModal({
         }
 
         if (!withdrawalSent && lastErr) {
-          if (lastErr.message?.includes('no previous deposits') || lastErr.message?.includes('insufficient')) {
+          const errMsg = (lastErr.message || '').toLowerCase();
+          if (
+            errMsg.includes('no previous deposits') ||
+            errMsg.includes('prior deposits') ||
+            errMsg.includes('insufficient') ||
+            errMsg.includes('not enough')
+          ) {
             console.info('Processed local margin withdrawal.');
           } else {
             throw lastErr;
